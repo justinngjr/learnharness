@@ -39,6 +39,13 @@ export const ASIDE_CONTEXT_MAX_CHARS = 60_000;
  *  no copy of it. */
 export const ASIDE_EXPLAIN_PROMPT = "Explain this passage.";
 
+/** Closes the forked transcript: the lesson is paused, not handed over.
+ *  Owner report 2026-10-25 — an aside opened over a lesson with a check
+ *  waiting answered as the teacher ("Back to the check that got cut
+ *  off…") and re-posed the quiz. */
+export const ASIDE_CONTEXT_TRAILER =
+	"[End of lesson transcript] That lesson is PAUSED while this aside runs — it is not yours to continue. Do not resume, re-ask, grade, or refer to any check or quiz left open above; the lesson's own teacher picks it up when the learner returns. Answer only the learner's side question below.";
+
 const OMITTED = "[earlier turns omitted for length]";
 
 function textOf(content: unknown): string {
@@ -46,11 +53,17 @@ function textOf(content: unknown): string {
 	if (!Array.isArray(content)) return "";
 	return content
 		.map((b) => {
-			const block = b as { type?: string; text?: string; name?: string };
+			const block = b as { type?: string; text?: string; name?: string; arguments?: unknown };
 			if (block.type === "text") return block.text ?? "";
 			// Tool calls read as a one-line note — the aside sees WHAT was
-			// asked (a quiz, a plan), never the machinery.
-			if (block.type === "toolCall") return `(used tool: ${block.name ?? "?"})`;
+			// asked (a quiz, a plan), never the machinery. A check carries
+			// its question so a side question ABOUT the check has it.
+			if (block.type === "toolCall") {
+				const q = (block.arguments as { question?: unknown } | undefined)?.question;
+				return typeof q === "string" && q.trim()
+					? `(the lesson posed a check via ${block.name ?? "?"}: ${q.trim()})`
+					: `(used tool: ${block.name ?? "?"})`;
+			}
 			return "";
 		})
 		.filter(Boolean)
@@ -65,9 +78,17 @@ export function renderParentTranscript(
 	maxChars: number = ASIDE_CONTEXT_MAX_CHARS,
 ): { text: string; messageCount: number; truncated: boolean } {
 	const lines: string[] = [];
+	// Only REAL tool results render. toLlmMessages synthesizes an
+	// INTERRUPTED result for a check left open (the provider needs one);
+	// shown to the aside it read as "the check got cut off — resume it",
+	// and the aside turned back into the teacher (owner report 2026-10-25).
+	const realResults = new Set(
+		messages.filter((m) => m.role === "toolResult").map((m) => (m as { toolCallId: string }).toolCallId),
+	);
 	for (const m of toLlmMessages(messages)) {
 		if (m.role === "system") continue;
 		if (m.role === "toolResult") {
+			if (!realResults.has(m.toolCallId)) continue;
 			const t = textOf(m.content).trim();
 			if (t) lines.push(`(tool result — ${m.toolName}): ${t}`);
 			continue;
@@ -107,6 +128,8 @@ export function newAsideContextMessage(
 		`[Aside context] — a side question about the session "${origin.title}". Its transcript so far (read-only; you are NOT continuing that lesson):`,
 		"",
 		rendered.text || "(the session has no messages yet)",
+		"",
+		ASIDE_CONTEXT_TRAILER,
 	];
 	if (origin.quote?.trim()) {
 		lines.push("", "The learner highlighted this passage — the question is about it:", "", `> ${origin.quote.trim().split("\n").join("\n> ")}`);

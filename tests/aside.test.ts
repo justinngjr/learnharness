@@ -50,6 +50,30 @@ describe("the forked transcript", () => {
 		assert.equal(r.truncated, false);
 	});
 
+	it("a check left open renders as the posed question — never as the synthesized INTERRUPTED result (owner report 2026-10-25: the aside re-posed the quiz)", () => {
+		const quiz = {
+			id: "a2",
+			role: "assistant",
+			content: [
+				{ type: "text", text: "Here is a check." },
+				{ type: "toolCall", id: "call_1", name: "quiz", arguments: { question: "Is R a function from A to B?", options: ["yes", "no"] } },
+			],
+			api: "x", provider: "x", model: "x", usage: {}, stopReason: "toolUse", timestamp: 2,
+		} as unknown as Msg;
+		const r = renderParentTranscript([user("u1", "teach me functions"), quiz]);
+		assert.ok(r.text.includes("(the lesson posed a check via quiz: Is R a function from A to B?)"), r.text);
+		assert.ok(!r.text.includes("interrupted"), `no synthesized result leaks: ${r.text}`);
+		assert.ok(!r.text.includes("tool result"), "no tool-result line without a real result");
+		// A REAL result still renders.
+		const answered: Msg = { id: "t1", role: "toolResult", toolCallId: "call_1", toolName: "quiz", content: [{ type: "text", text: "Learner answered: no" }], isError: false, timestamp: 3 } as unknown as Msg;
+		assert.ok(renderParentTranscript([user("u1", "teach me functions"), quiz, answered]).text.includes("(tool result — quiz): Learner answered: no"));
+		// The marker closes with the hands-off trailer.
+		const marker = newAsideContextMessage({ chatId: "c1", title: "Functions" }, [user("u1", "teach me functions"), quiz]);
+		const text = toLlmMessages([marker]).map((m) => JSON.stringify(m.content)).join("");
+		assert.ok(text.includes("[End of lesson transcript]"), "trailer present");
+		assert.ok(text.includes("Do not resume, re-ask, grade"), "the hands-off rule is spelled out");
+	});
+
 	it("keeps the TAIL under the budget and flags the cut", () => {
 		const msgs = Array.from({ length: 20 }, (_, i) => user(`u${i}`, `turn ${i} ${"x".repeat(50)}`));
 		const r = renderParentTranscript(msgs, 300);
