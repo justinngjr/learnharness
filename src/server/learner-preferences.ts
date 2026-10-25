@@ -123,7 +123,7 @@ export async function proposeLearnerPreference(
 		if (!engine) {
 			const spec = resolveConversationSpec(record.settings, effectiveSettings().models.strong);
 			if (!spec) throw new ModelsNotConfiguredError(["strong"]);
-			engine = piEngineForSpec(spec, true);
+			engine = piEngineForSpec(spec, false);
 		}
 		const result = await runSubagent([], {
 			role: "researcher" as never,
