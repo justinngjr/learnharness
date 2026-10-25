@@ -20,4 +20,18 @@ describe("the reading-thinking field (owner round, 2026-10-07)", () => {
 		// The cap survives: growth past max-h-40 still scrolls honestly.
 		assert.ok(html.includes("max-h-40"), "the 160px growth cap stays");
 	});
+
+	it("a /btw draft shows the ASIDE tag and tints the text (owner 2026-10-25: command feedback in composer-less states)", () => {
+		const html = renderToStaticMarkup(
+			<ReadingThinkingField value="/btw what is delta" onChange={() => {}} claim={false} />,
+		);
+		assert.ok(html.includes('data-testid="btw-badge"'), "the tag replaces the label");
+		assert.ok(!html.includes("Thinking while reading"), "the label yields to the tag");
+		assert.match(html, /text-primary/, "the draft takes the accent");
+		const plain = renderToStaticMarkup(
+			<ReadingThinkingField value="what is delta" onChange={() => {}} claim={false} />,
+		);
+		assert.ok(!plain.includes("btw-badge"), "plain thinking — no tag");
+		assert.ok(plain.includes("Thinking while reading"), "the label stays");
+	});
 });

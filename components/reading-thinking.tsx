@@ -2,6 +2,9 @@
 
 import { useCallback } from "react";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
+import { BtwBadge } from "@/components/composer";
+import { cn } from "@/lib/utils";
+import { parseBtw } from "@/src/core";
 
 /**
  * The reading-thinking field (owner design 2026-10-03, "two questions per
@@ -24,9 +27,15 @@ export function ReadingThinkingField({
 	onEscape,
 	onOpen,
 	claim,
+	onCommand,
 }: {
 	value: string;
 	onChange: (v: string) => void;
+	/** Slash commands typed here (asides, 2026-10-25): Enter hands the
+	 *  draft to the page first; true = consumed (the field clears), so
+	 *  `/btw …` opens an aside from the reading field as it does from
+	 *  the composer — the composer is unmounted while a check waits. */
+	onCommand?: (text: string) => boolean;
 	/** Esc in the field stops dictation (threaded from the page's hook). */
 	onEscape?: () => void;
 	/** The check waits CLOSED — Enter opens it (owner, keyboard round
@@ -46,13 +55,15 @@ export function ReadingThinkingField({
 		),
 		claim,
 	);
+	// /btw feedback (asides, owner 2026-10-25): same cue as the composer.
+	const btw = parseBtw(value) !== null;
 	return (
 		<div
 			data-testid="reading-thinking-field"
 			className="pointer-events-auto mb-2 rounded-2xl border bg-card/60 px-3 py-2 transition-colors focus-within:border-primary/50"
 		>
-			<div className="pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-				Thinking while reading
+			<div className="flex items-center pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+				{btw ? <BtwBadge /> : "Thinking while reading"}
 			</div>
 			<textarea
 				value={value}
@@ -80,6 +91,12 @@ export function ReadingThinkingField({
 					// (and the universal ⌘/Ctrl+Enter) opens it — the dictation
 					// flush lands HERE first via the caller's finishDictation,
 					// so spoken thoughts ride along. Shift+Enter stays a newline.
+					if (e.key === "Enter" && !e.shiftKey && onCommand?.(value)) {
+						e.preventDefault();
+						e.stopPropagation();
+						onChange("");
+						return;
+					}
 					if (e.key === "Enter" && onOpen !== undefined && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
 						e.preventDefault();
 						e.stopPropagation();
@@ -96,7 +113,10 @@ export function ReadingThinkingField({
 				}}
 				placeholder="Whatever comes to mind as you read."
 				rows={1}
-				className="field-sizing-content lh-input max-h-40 w-full resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground/70"
+				className={cn(
+					"field-sizing-content lh-input max-h-40 w-full resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground/70",
+					btw && "text-primary",
+				)}
 			/>
 		</div>
 	);

@@ -14,12 +14,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Composer, enterAction } from "../components/composer.tsx";
 
 function render(
-	opts: { busy?: boolean; canSend?: boolean; placeholder?: string; nextProblem?: boolean } = {},
+	opts: { busy?: boolean; canSend?: boolean; placeholder?: string; nextProblem?: boolean; value?: string } = {},
 ) {
 	return renderToStaticMarkup(
 		<Composer
 			busy={opts.busy ?? false}
-			value=""
+			value={opts.value ?? ""}
 			onChange={() => {}}
 			onSend={() => {}}
 			onStop={() => {}}
@@ -31,6 +31,14 @@ function render(
 }
 
 describe("Composer", () => {
+	it("/btw draft shows the ASIDE tag and tints the text (owner 2026-10-25: command feedback)", () => {
+		const html = render({ value: "/btw why is delta positive?" });
+		assert.ok(html.includes('data-testid="btw-badge"'), "the tag rides the row");
+		assert.match(html, /text-primary/, "the draft takes the accent");
+		assert.ok(!render({ value: "why is delta positive?" }).includes("btw-badge"), "plain text — no tag");
+		assert.ok(!render({ value: "/btwx" }).includes("btw-badge"), "not the command");
+	});
+
 	it("chat placeholder + send button", () => {
 		const html = render();
 		assert.match(html, /Ask, answer, or steer the lesson/, "the default — active sessions");

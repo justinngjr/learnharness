@@ -34,6 +34,7 @@ export function StatsBar({
 	dictationSlot,
 	chatId,
 	leadingSlot,
+	trailingSlot,
 }: {
 	turns: TurnUsage[];
 	contextTokens?: number | null;
@@ -52,6 +53,10 @@ export function StatsBar({
 	 *  composer's teach | practice switch rides here — before the session
 	 *  data (which renders nothing pre-chat on that surface). */
 	leadingSlot?: ReactNode;
+	/** Before the model control (asides, 2026-10-25): the in-session
+	 *  aside button — the one entry point that survives every dock
+	 *  variant (a waiting question unmounts the composer). */
+	trailingSlot?: ReactNode;
 }) {
 	const [open, setOpen] = useState(false);
 	const [selectedModel, setSelectedModel] = useState<string | undefined>();
@@ -192,6 +197,7 @@ export function StatsBar({
 			{/* The model + thinking control — one controller for the conversation
 			    agents (prober/teacher); the record's `turns` above still folds
 			    the ACTUAL models billed, regardless of what the picker says. */}
+			{trailingSlot}
 			<ModelControl chatId={chatId} onModelChange={setSelectedModel} />
 		</div>
 	);

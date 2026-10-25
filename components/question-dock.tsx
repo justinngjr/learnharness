@@ -5,6 +5,8 @@ import { ArrowDownIcon, ChevronRightIcon, PlayIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { finishDictation, isDictationActive, joinDictation, useDictationTarget } from "@/components/dictation";
 import { useEnterSubmits } from "@/components/enter-submits";
+import { BtwBadge } from "@/components/composer";
+import { parseBtw } from "@/src/core";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
 import {
@@ -90,6 +92,11 @@ export interface QuestionDockProps {
 	 *  and say so in the hint row. The server registry is the real gate;
 	 *  this is the affordance. */
 	compactionRunning?: boolean;
+	/** Slash commands typed into the answer/thinking field (asides,
+	 *  2026-10-25): submit hands the draft to the page first; true =
+	 *  consumed (the field clears, no answer is built) — `/btw …` opens
+	 *  an aside while a question owns the dock and the composer is gone. */
+	onCommand?: (text: string) => boolean;
 }
 
 export function QuestionDock({
@@ -104,6 +111,7 @@ export function QuestionDock({
 	phase = "probe",
 	dictationClaim = true,
 	compactionRunning = false,
+	onCommand,
 }: QuestionDockProps) {
 	// The probe-phase names (owner, 2026-10-09) canonicalize onto their
 	// teach twins for every dock concern — parse dispatch, labels, kinds:
@@ -158,6 +166,7 @@ export function QuestionDock({
 					onEscape={onEscape}
 					dictationClaim={dictationClaim}
 					compactionRunning={compactionRunning}
+					onCommand={onCommand}
 				/>
 			</div>
 		</>
@@ -253,6 +262,7 @@ function QuestionDockForm({
 	onEscape,
 	dictationClaim = true,
 	compactionRunning = false,
+	onCommand,
 }: Omit<QuestionDockProps, "expanded" | "onExpand" | "reveal">) {
 	const kind = toolQuestionKind(toolName);
 
@@ -359,12 +369,26 @@ function QuestionDockForm({
 
 	const toggle = (idx: number) => setSel(toggleOption(selectMode, sel, idx));
 
+	// /btw feedback (asides, owner 2026-10-25): the field's label becomes
+	// the ASIDE tag and the text takes the accent — same cue as the composer.
+	const btw = parseBtw(qd.mode === "text" ? text : thinking) !== null;
 	const canSubmit =
 		qd.mode === "text"
 			? text.trim().length > 0
 			: sel.dontKnow || (sel.otherSelected && other.trim().length > 0) || sel.selected.size > 0;
 
 	const submit = () => {
+		const typed = qd.mode === "text" ? answerTextRef.current : thinkingTextRef.current;
+		if (onCommand?.(typed)) {
+			if (qd.mode === "text") {
+				answerTextRef.current = "";
+				setText("");
+			} else {
+				thinkingTextRef.current = "";
+				setThinking("");
+			}
+			return;
+		}
 		if (!canSubmit || compactionRunning) return;
 		/* FINISH DICTATION FIRST (owner, 2026-10-01): Enter may arrive while
 		 * a run is live with reasoning still in Deepgram's hands. Stop the
@@ -827,8 +851,8 @@ function QuestionDockForm({
 					data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}
 					className="rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
 				>
-					<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-						{qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
+					<div className="flex items-center px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+						{btw ? <BtwBadge /> : qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
 					</div>
 					{qd.mode === "text" ? (
 						<textarea
@@ -856,7 +880,10 @@ function QuestionDockForm({
 							}}
 							placeholder="Type your answer…"
 							rows={1}
-							className="field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
+							className={cn(
+								"field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground",
+								btw && "text-primary",
+							)}
 						/>
 					) : (
 						<textarea
@@ -888,6 +915,7 @@ function QuestionDockForm({
 							rows={1}
 							className={cn(
 								"field-sizing-content lh-input max-h-48 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground/70",
+								btw && "text-primary",
 								// Phase-scaled prominence: teaching invites depth,
 								// probing stays quick.
 								phase === "teach" ? "min-h-[4.5rem]" : "min-h-10",
