@@ -48,9 +48,9 @@ import { PlanBlock, PlanPopup, latestTree } from "@/components/plan-block";
 import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
-import { ArrowRightIcon, CornerDownRightIcon, DumbbellIcon, MessageSquareQuoteIcon, WaypointsIcon } from "lucide-react";
+import { ArrowRightIcon, CornerDownRightIcon, DumbbellIcon, MessageSquareQuoteIcon, SparklesIcon, WaypointsIcon } from "lucide-react";
 import { AsideContextCard, AsidePanel, type AsideRequest } from "@/components/aside-panel";
-import { parseBtw, type AsideContextData, type AsideOrigin } from "@/src/core";
+import { ASIDE_EXPLAIN_PROMPT, parseBtw, type AsideContextData, type AsideOrigin } from "@/src/core";
 import type { PlanBlockData } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { SessionFind } from "@/components/session-find";
@@ -869,7 +869,7 @@ export function Chat({
 				text: text.slice(0, 4000),
 				messageId,
 				top: Math.max(0, rect.top - host.top - 34),
-				left: Math.min(Math.max(0, rect.right - host.left - 120), host.width - 130),
+				left: Math.min(Math.max(0, rect.right - host.left - 220), host.width - 230),
 			});
 		}, 0);
 	}, [kind]);
@@ -1795,17 +1795,36 @@ export function Chat({
 					/>
 				)}
 				{selectionChip && !asideOpen && (
-					<button
-						type="button"
-						data-testid="ask-about-this"
-						onMouseDown={(e) => e.preventDefault()}
-						onClick={() => void openAside({ quote: selectionChip.text, messageId: selectionChip.messageId })}
+					<div
+						data-testid="selection-chip"
 						style={{ top: selectionChip.top, left: selectionChip.left }}
-						className="absolute z-30 flex items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 text-xs shadow-md hover:bg-muted"
+						className="absolute z-30 flex items-stretch divide-x divide-border overflow-hidden rounded-md border border-border bg-popover text-xs shadow-md"
 					>
-						<MessageSquareQuoteIcon className="size-3.5" aria-hidden />
-						Ask about this
-					</button>
+						<button
+							type="button"
+							data-testid="ask-about-this"
+							onMouseDown={(e) => e.preventDefault()}
+							onClick={() => openAside({ quote: selectionChip.text, messageId: selectionChip.messageId })}
+							className="flex items-center gap-1 px-2 py-1 hover:bg-muted"
+						>
+							<MessageSquareQuoteIcon className="size-3.5" aria-hidden />
+							Ask about this
+						</button>
+						{/* One click, no typing (owner 2026-10-25): the aside opens
+						    over the passage and asks for an explanation at once. */}
+						<button
+							type="button"
+							data-testid="explain-this"
+							onMouseDown={(e) => e.preventDefault()}
+							onClick={() =>
+								openAside({ quote: selectionChip.text, messageId: selectionChip.messageId, question: ASIDE_EXPLAIN_PROMPT })
+							}
+							className="flex items-center gap-1 px-2 py-1 hover:bg-muted"
+						>
+							<SparklesIcon className="size-3.5" aria-hidden />
+							Explain this
+						</button>
+					</div>
 				)}
 				{asideOpen && (
 					<AsidePanel

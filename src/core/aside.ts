@@ -33,6 +33,12 @@ export interface AsideContextData {
 /** Default budget for the forked transcript text (chars ≈ tokens × 4). */
 export const ASIDE_CONTEXT_MAX_CHARS = 60_000;
 
+/** The highlight chip's one-click lane (owner 2026-10-25): "Explain this"
+ *  opens the aside over the quoted passage and asks this at once — the
+ *  passage itself rides the aside-context marker, so the question needs
+ *  no copy of it. */
+export const ASIDE_EXPLAIN_PROMPT = "Explain this passage.";
+
 const OMITTED = "[earlier turns omitted for length]";
 
 function textOf(content: unknown): string {
