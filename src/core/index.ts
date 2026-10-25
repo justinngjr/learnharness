@@ -48,6 +48,7 @@ export * from "./input-events.ts";
 // the deleted server projection to the client side. Pure, browser-safe.
 export * from "./view.ts";
 export * from "./aside.ts";
+export * from "./learner-preferences.ts";
 export * from "./tool-parts.ts";
 export * from "./prices.ts";
 export * from "./context-usage.ts";

@@ -25,6 +25,7 @@ import type {
 } from "../core/settings.ts";
 import { BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
+import { LEARNER_PREFERENCE_MAX_CHARS, sanitizeLearnerPreferences, type LearnerPreference } from "../core/learner-preferences.ts";
 
 /** Parsed-or-rejected — `ok: false` carries the 400's error message. */
 export type SettingsBodyResult<T> =
@@ -377,6 +378,23 @@ export function parseCompactionSettingsBody(body: unknown): SettingsBodyResult<C
 
 /** The section→parser map for PUT /api/settings/[section] (the route also
  *  carries the special prompts sub-resource). */
+/** PUT /api/settings/learnerPreferences (2026-10-25): the whole list,
+ *  replace-whole like every section. Each entry must already carry the
+ *  stored shape — the client edits a copy of the record's list. */
+export function parseLearnerPreferencesSettingsBody(body: unknown): SettingsBodyResult<LearnerPreference[]> {
+	if (!Array.isArray(body)) return { ok: false, error: "Body must be an array of preferences" };
+	for (const entry of body) {
+		const r = asRecord(entry);
+		if (!r || typeof r.id !== "string" || typeof r.text !== "string") {
+			return { ok: false, error: "Each preference needs a string id and text" };
+		}
+		if (r.text.length > LEARNER_PREFERENCE_MAX_CHARS) {
+			return { ok: false, error: `Preference text must be at most ${LEARNER_PREFERENCE_MAX_CHARS} characters` };
+		}
+	}
+	return { ok: true, settings: sanitizeLearnerPreferences(body) };
+}
+
 export const SETTINGS_SECTIONS = {
 	general: parseGeneralSettingsBody,
 	chat: parseSettingsBody,
@@ -385,6 +403,7 @@ export const SETTINGS_SECTIONS = {
 	graph: parseGraphSettingsBody,
 	compaction: parseCompactionSettingsBody,
 	models: parseModelsSettingsBody,
+	learnerPreferences: parseLearnerPreferencesSettingsBody,
 } as const;
 
 export type SettingsSectionName = keyof typeof SETTINGS_SECTIONS;

@@ -37,6 +37,7 @@ import {
 	type AppearanceSettings,
 	type CompactionSettings,
 	type GraphSettings,
+	type LearnerPreference,
 	type UserSettings,
 } from "@/src/core";
 import { useAppearance } from "./appearance.tsx";
@@ -49,6 +50,7 @@ import { KeysSection } from "./keys-section.tsx";
 import { Hint } from "@/components/ui/hint";
 import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
 import { KeyboardSection } from "./keyboard-section.tsx";
+import { LearnerPreferencesSection } from "./learner-preferences-section.tsx";
 import { ChatGPTUIProvider } from "./chatgpt-connection.tsx";
 import { NativeSubscriptionUIProvider } from "./subscription-connections.tsx";
 
@@ -60,6 +62,7 @@ const SECTIONS = [
 	{ id: "agent", label: "Agent" },
 	{ id: "appearance", label: "Appearance" },
 	{ id: "graph", label: "Graph" },
+	{ id: "preferences", label: "Learner preferences" },
 	{ id: "keyboard", label: "Keyboard", hint: "Stored on this device" },
 	{ id: "general", label: "General" },
 ] as const;
@@ -228,7 +231,7 @@ export function SettingsDialogBody({
 	 *  schema mistake caught by the validation surface). */
 	const write = useCallback(
 		async (
-			section: "general" | "agent" | "models" | "appearance" | "graph" | "compaction",
+			section: "general" | "agent" | "models" | "appearance" | "graph" | "compaction" | "learnerPreferences",
 			body: object,
 		) => {
 			setError(null);
@@ -426,6 +429,20 @@ export function SettingsDialogBody({
 										graph={record.graph}
 										onSectionChange={(next: GraphSettings) =>
 											void write("graph", next)
+										}
+									/>
+								</SettingsSection>
+							)}
+							{active === "preferences" && (
+								<SettingsSection
+									title="Learner preferences"
+									hint="How you want to be taught — the teacher, practice and aside agents follow these in every chat."
+									testid="section-preferences"
+								>
+									<LearnerPreferencesSection
+										preferences={record.learnerPreferences}
+										onSectionChange={(next: LearnerPreference[]) =>
+											void write("learnerPreferences", next)
 										}
 									/>
 								</SettingsSection>
