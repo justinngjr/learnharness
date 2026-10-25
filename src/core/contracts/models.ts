@@ -83,3 +83,20 @@ export interface CatalogProvider {
 	/** Whether that var is currently present (env or auth file). */
 	keyPresent: boolean;
 }
+
+/**
+ * The custom OpenAI-compatible provider's model-discovery status
+ * (2026-10-24): what the last `GET {baseUrl}/models` scan found for the
+ * CURRENT base URL. `unconfigured` = no base URL; `pending` = base URL set
+ * but not scanned yet in this process; `ok` / `failed` = scanned.
+ * `manualCount` is the user's manually listed ids (always usable).
+ */
+export interface OpenAICompatibleScanStatus {
+	state: "unconfigured" | "pending" | "ok" | "failed";
+	baseUrl: string | null;
+	count: number;
+	manualCount: number;
+	/** ISO timestamp of the scan, null until one ran. */
+	at: string | null;
+	error: string | null;
+}

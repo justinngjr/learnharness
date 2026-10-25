@@ -13,6 +13,7 @@ import { type ModelRole } from "../../config.ts";
 import { DEFAULT_THINKING_ORDER } from "../core/settings.ts";
 import packageMetadata from "../../package.json" with { type: "json" };
 import { chatGPTModel } from "./chatgpt-bridge.ts";
+import { syncOpenAICompatibleProvider } from "./openai-compatible.ts";
 import { chatGPTStream } from "./chatgpt-stream.ts";
 import type { ChatGPTDispatchLifecycle } from "./chatgpt-request-cycle.ts";
 import { nativeSubscriptionId, nativeSubscriptionModel } from "./subscription-bridge.ts";
@@ -63,6 +64,10 @@ export function piModels() {
 		collection = createModels({ identity: APP_IDENTITY });
 		for (const provider of builtinProviders()) collection.setProvider(provider);
 	}
+	// The custom OpenAI-compatible provider follows its live config (base
+	// URL / key / manual ids / scan cache) — re-synced on every access, a
+	// no-op when nothing changed.
+	syncOpenAICompatibleProvider(collection);
 	return collection;
 }
 

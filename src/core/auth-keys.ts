@@ -18,6 +18,17 @@
  * have shapes worth checking and docs worth showing).
  */
 
+import {
+	OPENAI_COMPATIBLE_API_KEY_VAR,
+	OPENAI_COMPATIBLE_BASE_URL_VAR,
+	OPENAI_COMPATIBLE_LABEL,
+	OPENAI_COMPATIBLE_MODELS_VAR,
+	OPENAI_COMPATIBLE_PROVIDER_ID,
+	OPENAI_COMPATIBLE_VARS,
+	normalizeOpenAICompatibleBaseUrl,
+	parseManualModelIds,
+} from "./openai-compatible.ts";
+
 /** One curated key entry. `id` is the env-var/file key name. */
 export interface AuthKeyInfo {
 	id: string;
@@ -122,10 +133,37 @@ export const AUTH_PROVIDER_KEYS: readonly AuthProviderInfo[] = [
 	{ id: "zai-coding-cn", envVar: "ZAI_CODING_CN_API_KEY", label: "Z.AI Coding CN" },
 ] as const;
 
+/**
+ * THE CUSTOM OPENAI-COMPATIBLE PROVIDER (2026-10-24): one row OUTSIDE the
+ * pi-ai-pinned table above (it is ours, not pi's — the no-drift test keeps
+ * AUTH_PROVIDER_KEYS exact). Its "key" row is the API key var; the base URL
+ * and the manual model list ride as sibling vars (core/openai-compatible.ts)
+ * that the keys UI edits beneath it. Present = base URL set; the key is
+ * optional (local servers such as Ollama / LM Studio take none).
+ */
+export const OPENAI_COMPATIBLE_PROVIDER: AuthProviderInfo = Object.freeze({
+	id: OPENAI_COMPATIBLE_PROVIDER_ID,
+	envVar: OPENAI_COMPATIBLE_API_KEY_VAR,
+	label: OPENAI_COMPATIBLE_LABEL,
+});
+
+/** The pi-ai table + the custom provider: the roster every provider
+ *  surface (dropdown, picker federation, refusal labels) reads. */
+export const ALL_PROVIDER_KEYS: readonly AuthProviderInfo[] = [...AUTH_PROVIDER_KEYS, OPENAI_COMPATIBLE_PROVIDER];
+
+/** The human label for a provider id — the roster's, else the id. */
+export function providerLabel(id: string): string {
+	return ALL_PROVIDER_KEYS.find((p) => p.id === id)?.label ?? id;
+}
+
 /** Every distinct env var a model-provider key rides in (the write side's
  *  writability check — see isProviderEnvVar below; also drives which
- *  PRESENT provider vars surface as status rows). */
-export const AUTH_PROVIDER_ENV_VARS: ReadonlySet<string> = new Set(AUTH_PROVIDER_KEYS.map((p) => p.envVar));
+ *  PRESENT provider vars surface as status rows). Includes the custom
+ *  provider's three vars. */
+export const AUTH_PROVIDER_ENV_VARS: ReadonlySet<string> = new Set([
+	...AUTH_PROVIDER_KEYS.map((p) => p.envVar),
+	...OPENAI_COMPATIBLE_VARS,
+]);
 
 /** Is this env-var name the key of SOME pi-ai model provider? */
 export function isProviderEnvVar(envVar: string): boolean {
@@ -173,6 +211,20 @@ export function validateKeyShape(id: string, rawValue: string): KeyShapeResult {
  *  only paste hygiene applies; owner spec: trim, no whitespace, min 12). */
 export function genericProviderKeyGuard(id: string, rawValue: string): KeyShapeResult {
 	const value = rawValue.trim();
+	// The custom provider's non-secret vars carry their own shapes.
+	if (id === OPENAI_COMPATIBLE_BASE_URL_VAR) {
+		const url = normalizeOpenAICompatibleBaseUrl(value);
+		return url.ok ? { ok: true } : { ok: false, error: url.error };
+	}
+	if (id === OPENAI_COMPATIBLE_MODELS_VAR) {
+		return parseManualModelIds(value).length > 0
+			? { ok: true }
+			: { ok: false, error: `${id} must list at least one model id (comma-separated)` };
+	}
+	if (id === OPENAI_COMPATIBLE_API_KEY_VAR) {
+		// Any non-empty token: gateways mint keys of every shape and length.
+		return value.length > 0 && !/\s/.test(value) ? { ok: true } : { ok: false, error: `${id} must be a single token with no whitespace` };
+	}
 	if (value.length >= 12 && !/\s/.test(value)) return { ok: true };
 	return { ok: false, error: `${id} must be at least 12 characters with no whitespace` };
 }

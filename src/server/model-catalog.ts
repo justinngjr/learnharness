@@ -28,6 +28,10 @@ export async function refreshConnectionCatalog(provider?: string): Promise<void>
 	await Promise.all([
 		!provider || provider === "chatgpt" ? refreshChatGPTModels(piModels().getModels("openai").filter((m): m is Model<"openai-responses"> => m.api === "openai-responses")) : Promise.resolve(),
 		!provider || nativeSubscriptionId(provider) ? refreshSubscriptionModels() : Promise.resolve(),
+		// The custom OpenAI-compatible endpoint: scan `{baseUrl}/models` ONCE
+		// per base URL per process (the first picker load after a save); the
+		// explicit rescan lives on POST /api/keys/openai-compatible/scan.
+		(!provider || provider === OPENAI_COMPATIBLE_PROVIDER_ID) && openAICompatibleConfig() && !openAICompatibleScanned() ? scanOpenAICompatibleModels() : Promise.resolve(),
 	]);
 }
 function connectionModel(provider: string, id: string): Model<Api> | undefined {
@@ -37,6 +41,10 @@ function connectionProviderIds(): string[] { return [...piModels().getProviders(
 import { settingsStore } from "../store/settings.ts";
 import { effectiveSettings } from "./stores.ts";
 import { keyValue } from "./keys.ts";
+import { openAICompatibleConfig, openAICompatibleScanned, scanOpenAICompatibleModels } from "../agent/openai-compatible.ts";
+// Re-exported for the routes (app/ imports only the barrels).
+export { openAICompatibleConfig, openAICompatibleScanStatus, scanOpenAICompatibleModels } from "../agent/openai-compatible.ts";
+import { OPENAI_COMPATIBLE_BASE_URL_VAR, OPENAI_COMPATIBLE_PROVIDER_ID } from "../core/openai-compatible.ts";
 import type { ChatSettings } from "../core/contracts/chat.ts";
 import type {
 	CatalogDefaults,
@@ -142,6 +150,8 @@ export function catalogProviders(): CatalogProvider[] {
 	})).concat([
 		{ id: "chatgpt", envVar: "", keyPresent: chatGPTConnected() },
 		...NATIVE_SUBSCRIPTIONS.map((p) => ({ id: p.logicalId, envVar: "", keyPresent: nativeSubscriptionConnected(p.providerId) })),
+		// The custom provider federates on its BASE URL (the key is optional).
+		{ id: OPENAI_COMPATIBLE_PROVIDER_ID, envVar: OPENAI_COMPATIBLE_BASE_URL_VAR, keyPresent: keyValue(OPENAI_COMPATIBLE_BASE_URL_VAR) !== undefined },
 	]).sort((a, b) => a.id.localeCompare(b.id));
 }
 

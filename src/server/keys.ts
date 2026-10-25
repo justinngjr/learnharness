@@ -41,6 +41,7 @@
 
 import {
 	AUTH_KEYS,
+	ALL_PROVIDER_KEYS,
 	AUTH_PROVIDER_KEYS,
 	AUTH_PROVIDER_ENV_VARS,
 	type AuthKeyInfo,
@@ -52,6 +53,7 @@ import {
 	validateKeyShape,
 } from "../core/auth-keys.ts";
 import { authStore } from "../store/auth.ts";
+import { OPENAI_COMPATIBLE_BASE_URL_VAR, OPENAI_COMPATIBLE_PLAIN_VARS, OPENAI_COMPATIBLE_PROVIDER_ID, normalizeOpenAICompatibleBaseUrl } from "../core/openai-compatible.ts";
 import { isSubscriptionProvider, subscriptionConnected } from "../agent/subscription-connections.ts";
 
 // The once-per-process boot record — globalThis anchor (HMR re-imports the
@@ -83,7 +85,7 @@ export function isWritableAuthKey(id: string): boolean {
  *  in core/auth-keys.ts and tests/auth-provider-keys.test.ts). Sorted by
  *  id for a stable payload. */
 export function providerKeyList() {
-	return [...AUTH_PROVIDER_KEYS].sort((a, b) => a.id.localeCompare(b.id));
+	return [...ALL_PROVIDER_KEYS].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** The fresh-user switch (owner, interlude 2026-09-22): env keys are
@@ -169,7 +171,9 @@ export function resolveKeyStatuses(
 			id,
 			info: AUTH_KEYS.find((k) => k.id === id) ?? null,
 			present: live !== undefined,
-			masked: live !== undefined ? `${maskKey(live)} (${live.trim().length} chars)` : null,
+			// Non-secret vars (the custom provider's base URL / model list) show
+			// in the clear — there is nothing to protect and the UI edits them.
+			masked: live !== undefined ? (OPENAI_COMPATIBLE_PLAIN_VARS.has(id) ? live.trim() : `${maskKey(live)} (${live.trim().length} chars)`) : null,
 			source: isRealEnv ? "env" : live !== undefined ? "file" : "none",
 			shadowedByEnv: isRealEnv && fileValue !== undefined && envValue !== fileValue,
 		});
@@ -202,6 +206,8 @@ export function keyValue(id: string): string | undefined {
  * no key at all: nothing to gate, present by definition. */
 export function providerKeyPresent(provider: string): boolean {
 	if (isSubscriptionProvider(provider)) return subscriptionConnected(provider);
+	// The custom provider is present when its base URL is; its key is optional.
+	if (provider === OPENAI_COMPATIBLE_PROVIDER_ID) return keyValue(OPENAI_COMPATIBLE_BASE_URL_VAR) !== undefined;
 	const info = AUTH_PROVIDER_KEYS.find((p) => p.id === provider);
 	return info ? keyValue(info.envVar) !== undefined : true;
 }
@@ -215,7 +221,10 @@ export function providerKeyPresent(provider: string): boolean {
 export function saveKey(id: string, value: string): { ok: true; status: AuthKeyStatus } | { ok: false; error: string } {
 	const shape = isProviderEnvVar(id) ? genericProviderKeyGuard(id, value) : validateKeyShape(id, value);
 	if (!shape.ok) return { ok: false, error: shape.error };
-	const trimmed = value.trim();
+	// The custom base URL is stored normalised (no trailing slash) so the
+	// provider, the status row and the scan agree on one spelling.
+	const normalizedUrl = id === OPENAI_COMPATIBLE_BASE_URL_VAR ? normalizeOpenAICompatibleBaseUrl(value) : undefined;
+	const trimmed = normalizedUrl?.ok ? normalizedUrl.value : value.trim();
 	authStore.setAuthVar(id, trimmed);
 	const record = boot();
 	if (!record.realEnv.has(id)) {

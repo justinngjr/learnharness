@@ -24,7 +24,16 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { AUTH_KEYS, type AuthKeyStatus } from "@/src/core";
+import {
+	AUTH_KEYS,
+	OPENAI_COMPATIBLE_API_KEY_VAR,
+	OPENAI_COMPATIBLE_BASE_URL_VAR,
+	OPENAI_COMPATIBLE_LABEL,
+	OPENAI_COMPATIBLE_MODELS_VAR,
+	OPENAI_COMPATIBLE_PROVIDER_ID,
+	type AuthKeyStatus,
+	type OpenAICompatibleScanStatus,
+} from "@/src/core";
 import { SettingsGroup } from "./controls.tsx";
 import { SubscriptionConnections } from "./subscription-connections.tsx";
 import { ProviderMenuList } from "./model-menu.tsx";
@@ -42,7 +51,17 @@ export interface ProviderKeyInfo {
 interface KeysResponse {
 	keys: AuthKeyStatus[];
 	providers?: ProviderKeyInfo[];
+	/** The custom OpenAI-compatible endpoint's last /models scan. */
+	openaiCompatible?: OpenAICompatibleScanStatus;
 }
+
+/** The custom provider's three vars → the panel's sub-rows. */
+export interface OpenAICompatibleRows {
+	baseUrl: AuthKeyStatus | undefined;
+	apiKey: AuthKeyStatus | undefined;
+	models: AuthKeyStatus | undefined;
+}
+const OPENAI_COMPATIBLE_ROW_VARS: readonly string[] = [OPENAI_COMPATIBLE_BASE_URL_VAR, OPENAI_COMPATIBLE_API_KEY_VAR, OPENAI_COMPATIBLE_MODELS_VAR];
 
 /** The curated tools group, pinned by id (the catalog owns the copy;
  *  these ids are the contract). Derived from the catalog (search wave,
@@ -66,6 +85,9 @@ export function classifyKeys(
 	unknownRows: AuthKeyStatus[];
 	/** Providers without a stored key — the Add dropdown's options. */
 	addable: ProviderKeyInfo[];
+	/** Present when a base URL is saved: the custom provider's panel rows
+	 *  (its three vars are pulled OUT of providerRows / unknownRows). */
+	openaiCompatible: OpenAICompatibleRows | null;
 } {
 	const byId = new Map(statuses.map((s) => [s.id, s]));
 	const isTool = (id: string) => (TOOL_IDS as readonly string[]).includes(id);
@@ -82,6 +104,7 @@ export function classifyKeys(
 	const unknownRows: AuthKeyStatus[] = [];
 	for (const s of statuses) {
 		if (isTool(s.id)) continue;
+		if (OPENAI_COMPATIBLE_ROW_VARS.includes(s.id)) continue;
 		if (providerEnv.has(s.id) || (!s.info && providers === undefined)) providerRows.push(s);
 		else if (!s.info) unknownRows.push(s);
 		// (pre-interlude catalogs: a curated-but-unclassified status still
@@ -92,7 +115,16 @@ export function classifyKeys(
 		providerRows,
 		toolRows: TOOL_IDS.map((id) => byId.get(id) ?? synth(id)),
 		unknownRows,
-		addable: (providers ?? []).filter((p) => !byId.has(p.envVar)),
+		addable: (providers ?? []).filter((p) =>
+			p.id === OPENAI_COMPATIBLE_PROVIDER_ID ? !byId.has(OPENAI_COMPATIBLE_BASE_URL_VAR) : !byId.has(p.envVar),
+		),
+		openaiCompatible: byId.has(OPENAI_COMPATIBLE_BASE_URL_VAR)
+			? {
+					baseUrl: byId.get(OPENAI_COMPATIBLE_BASE_URL_VAR),
+					apiKey: byId.get(OPENAI_COMPATIBLE_API_KEY_VAR),
+					models: byId.get(OPENAI_COMPATIBLE_MODELS_VAR),
+				}
+			: null,
 	};
 }
 
@@ -100,6 +132,8 @@ export function classifyKeys(
  *  environment-owned value — the row itself is read-only then). Pure. */
 export function keyStatusLine(status: AuthKeyStatus): string {
 	if (!status.present || !status.masked) return "not set";
+	// Plain (non-secret) vars arrive unmasked, with no "(N chars)" suffix.
+	if (!/ \(\d+ chars\)$/.test(status.masked)) return `${status.masked}${status.source === "env" ? " · env" : ""}`;
 	const tail = status.masked.replace(/ \((\d+) chars\)$/, "");
 	const chars = status.masked.match(/\((\d+) chars\)$/)?.[1] ?? "?";
 	return `${tail} · ${chars}${status.source === "env" ? " · env" : ""}`;
@@ -118,10 +152,12 @@ function KeyTableRow({
 	onDelete,
 	onCancel,
 	testid,
+	placeholder = "Paste key…",
 }: {
 	label: string;
 	/** The "Get a key ↗" target — curated keys carry one. */
 	docsUrl?: string;
+	placeholder?: string;
 	status: AuthKeyStatus;
 	expanded: boolean;
 	onToggle: () => void;
@@ -163,7 +199,7 @@ function KeyTableRow({
 						onKeyDown={(e) => {
 							if (e.key === "Enter") void save();
 						}}
-						placeholder="Paste key…"
+						placeholder={placeholder}
 						aria-label={`${label} key`}
 						data-testid={`${testid}-input`}
 						disabled={busy}
@@ -333,6 +369,8 @@ export function KeysSection({
 	/** The paste editor for a freshly chosen Add-provider target. */
 	const [adding, setAdding] = useState<ProviderKeyInfo | null>(null);
 	const [addError, setAddError] = useState<string | null>(null);
+	const [scan, setScan] = useState<OpenAICompatibleScanStatus | undefined>(undefined);
+	const [scanning, setScanning] = useState(false);
 
 	// Escape folds any open editor (unfolded row or the Add-provider paste)
 	// WITHOUT closing the dialog. Claimed at document CAPTURE phase — the
@@ -357,6 +395,7 @@ export function KeysSection({
 			.then((body: KeysResponse) => {
 				setStatuses(body.keys ?? []);
 				if (body.providers) setProviders(body.providers);
+				setScan(body.openaiCompatible);
 			})
 			.catch(() => setStatuses([]))
 			.finally(() => setLoading(false));
@@ -387,7 +426,23 @@ export function KeysSection({
 		// the setup dialog's stage advance, and any other keys reader hear
 		// that a key landed — deletions included (see deleteKey below).
 		notifySettingsSaved("keys");
+		// A base URL / key change re-scans the endpoint's /models (the picker
+		// lists what it finds; the status line reports the outcome).
+		if (id === OPENAI_COMPATIBLE_BASE_URL_VAR || id === OPENAI_COMPATIBLE_API_KEY_VAR) await rescan();
 		return null;
+	}
+	async function rescan(): Promise<void> {
+		setScanning(true);
+		try {
+			const res = await fetch("/api/keys/openai-compatible/scan", { method: "POST" });
+			if (res.ok) setScan((await res.json()) as OpenAICompatibleScanStatus);
+			await reload();
+			notifySettingsSaved("keys");
+		} catch {
+			// the status line keeps the last known state
+		} finally {
+			setScanning(false);
+		}
 	}
 
 	async function deleteKey(id: string): Promise<void> {
@@ -400,10 +455,30 @@ export function KeysSection({
 		return <p className="px-6 py-5 text-xs text-muted-foreground/70">Loading keys…</p>;
 	}
 
-	const { providerRows, toolRows, unknownRows, addable } = classifyKeys(statuses, providers);
+	const { providerRows, toolRows, unknownRows, addable, openaiCompatible } = classifyKeys(statuses, providers);
+	const rowProps = (status: AuthKeyStatus) => ({
+		status,
+		expanded: openRow === status.id,
+		onToggle: () => setOpenRow(openRow === status.id ? null : status.id),
+		onSave: async (v: string) => {
+			const err = await saveKey(status.id, v);
+			if (!err) setOpenRow(null);
+			return err;
+		},
+		onCancel: () => setOpenRow(null),
+		onDelete: () => deleteKey(status.id),
+		testid: `key-${status.id.toLowerCase()}`,
+	});
 
-	async function saveNewProvider(p: ProviderKeyInfo, value: string) {
-		const err = await saveKey(p.envVar, value);
+	async function saveNewProvider(p: ProviderKeyInfo, value: string, baseUrl?: string) {
+		let err: string | null;
+		if (p.id === OPENAI_COMPATIBLE_PROVIDER_ID) {
+			// Base URL first (the presence gate), then the optional key.
+			err = await saveKey(OPENAI_COMPATIBLE_BASE_URL_VAR, baseUrl ?? "");
+			if (!err && value.trim()) err = await saveKey(OPENAI_COMPATIBLE_API_KEY_VAR, value);
+		} else {
+			err = await saveKey(p.envVar, value);
+		}
 		if (err) setAddError(err);
 		else {
 			setAdding(null);
@@ -432,6 +507,18 @@ export function KeysSection({
 						testid={`key-${status.id.toLowerCase()}`}
 					/>
 				))}
+				{openaiCompatible && (
+					<OpenAICompatiblePanel
+						rows={openaiCompatible}
+						scan={scan}
+						scanning={scanning}
+						rowProps={rowProps}
+						onRescan={() => void rescan()}
+						onRemove={async () => {
+							for (const id of OPENAI_COMPATIBLE_ROW_VARS) await deleteKey(id);
+						}}
+					/>
+				)}
 				{providers !== undefined && (
 					<AddProviderRow
 						addable={addable}
@@ -444,7 +531,7 @@ export function KeysSection({
 				{adding && (
 					<div className="flex items-center gap-2 rounded-sm px-1 py-1.5" data-testid={`key-${adding.id}-editor`}>
 						<span className="shrink-0 font-ui text-xs text-foreground">{adding.label}</span>
-						<AddProviderEditor provider={adding} onSave={(v) => void saveNewProvider(adding, v)} onCancel={() => setAdding(null)} error={addError} />
+						<AddProviderEditor provider={adding} onSave={(v, baseUrl) => void saveNewProvider(adding, v, baseUrl)} onCancel={() => setAdding(null)} error={addError} />
 					</div>
 				)}
 				{unknownRows.length > 0 && <div data-testid="group-unknown-keys">
@@ -493,30 +580,52 @@ function AddProviderEditor({
 	error,
 }: {
 	provider: ProviderKeyInfo;
-	onSave: (value: string) => void;
+	/** `baseUrl` rides only for the OpenAI-compatible provider. */
+	onSave: (value: string, baseUrl?: string) => void;
 	onCancel: () => void;
 	error: string | null;
 }) {
 	const [value, setValue] = useState("");
+	const [baseUrl, setBaseUrl] = useState("");
+	const custom = provider.id === OPENAI_COMPATIBLE_PROVIDER_ID;
+	// The custom endpoint needs a base URL; its key is optional (local
+	// servers). Every other provider needs exactly its key.
+	const ready = custom ? !!baseUrl.trim() : !!value.trim();
+	const submit = () => ready && onSave(value, custom ? baseUrl : undefined);
 	return (
 		<>
+			{custom && (
+				<input
+					type="text"
+					value={baseUrl}
+					onChange={(e) => setBaseUrl(e.target.value)}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") submit();
+					}}
+					placeholder="Base URL, e.g. https://host/v1"
+					aria-label={`${provider.label} base URL`}
+					data-testid={`key-${provider.id}-baseurl`}
+					autoFocus
+					className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+				/>
+			)}
 			<input
 				type="text"
 				value={value}
 				onChange={(e) => setValue(e.target.value)}
 				onKeyDown={(e) => {
-					if (e.key === "Enter" && value.trim()) onSave(value);
+					if (e.key === "Enter") submit();
 				}}
-				placeholder="Paste key…"
+				placeholder={custom ? "API key (optional)" : "Paste key…"}
 				aria-label={`${provider.label} key`}
 				data-testid={`key-${provider.id}-input`}
-				autoFocus
+				autoFocus={!custom}
 				className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 			/>
 			<button
 				type="button"
-				onClick={() => value.trim() && onSave(value)}
-				disabled={!value.trim()}
+				onClick={submit}
+				disabled={!ready}
 				data-testid={`key-${provider.id}-save`}
 				className="shrink-0 text-xs text-foreground underline-offset-2 hover:underline disabled:text-muted-foreground/40 disabled:no-underline"
 			>
@@ -536,5 +645,74 @@ function AddProviderEditor({
 				</p>
 			)}
 		</>
+	);
+}
+
+/** The custom endpoint's scan status line. */
+export function scanStatusLine(scan: OpenAICompatibleScanStatus | undefined, scanning: boolean): string {
+	if (scanning) return "scanning /models…";
+	if (!scan || scan.state === "unconfigured") return "";
+	const manual = scan.manualCount > 0 ? ` · ${scan.manualCount} manual` : "";
+	if (scan.state === "pending") return `not scanned yet${manual}`;
+	if (scan.state === "failed") return `scan failed: ${scan.error}${manual}${scan.manualCount === 0 ? " — add model ids manually" : ""}`;
+	return `${scan.count} model${scan.count === 1 ? "" : "s"} found${manual}`;
+}
+
+/**
+ * The OpenAI-compatible provider's panel (2026-10-24): one header with the
+ * /models scan outcome + Rescan / Remove, then the three editable rows
+ * (base URL, optional key, manual model ids) sharing KeyTableRow.
+ */
+function OpenAICompatiblePanel({
+	rows,
+	scan,
+	scanning,
+	rowProps,
+	onRescan,
+	onRemove,
+}: {
+	rows: OpenAICompatibleRows;
+	scan: OpenAICompatibleScanStatus | undefined;
+	scanning: boolean;
+	rowProps: (status: AuthKeyStatus) => Omit<Parameters<typeof KeyTableRow>[0], "label" | "placeholder" | "docsUrl">;
+	onRescan: () => void;
+	onRemove: () => Promise<void>;
+}) {
+	const synth = (id: string): AuthKeyStatus => ({ id, info: null, present: false, masked: null, source: "none", shadowedByEnv: false });
+	const line = scanStatusLine(scan, scanning);
+	return (
+		<div data-testid="openai-compatible-panel" className="rounded-sm border border-border/60 px-1 py-1">
+			<div className="flex items-center justify-between gap-3 px-1 py-1">
+				<span className="font-ui text-xs text-foreground">{OPENAI_COMPATIBLE_LABEL}</span>
+				<span className="flex items-center gap-2">
+					<span
+						data-testid="openai-compatible-scan-status"
+						className={`font-mono text-[11px] ${scan?.state === "failed" && !scanning ? "text-red-500" : "text-muted-foreground"}`}
+					>
+						{line}
+					</span>
+					<button
+						type="button"
+						onClick={onRescan}
+						disabled={scanning}
+						data-testid="openai-compatible-rescan"
+						className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline disabled:no-underline"
+					>
+						Rescan
+					</button>
+					<button
+						type="button"
+						onClick={() => void onRemove()}
+						data-testid="openai-compatible-remove"
+						className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-red-500 hover:underline"
+					>
+						Remove
+					</button>
+				</span>
+			</div>
+			<KeyTableRow label="Base URL" placeholder="https://host/v1" {...rowProps(rows.baseUrl ?? synth(OPENAI_COMPATIBLE_BASE_URL_VAR))} />
+			<KeyTableRow label="API key (optional)" {...rowProps(rows.apiKey ?? synth(OPENAI_COMPATIBLE_API_KEY_VAR))} />
+			<KeyTableRow label="Models (manual)" placeholder="model ids, comma-separated" {...rowProps(rows.models ?? synth(OPENAI_COMPATIBLE_MODELS_VAR))} />
+		</div>
 	);
 }

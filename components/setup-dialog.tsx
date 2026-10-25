@@ -36,7 +36,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import type React from "react";
-import { type ModelCatalogEntry, type ModelSlotName, type ModelsSettings } from "@/src/core";
+import { OPENAI_COMPATIBLE_API_KEY_VAR, OPENAI_COMPATIBLE_BASE_URL_VAR, OPENAI_COMPATIBLE_PROVIDER_ID, type ModelCatalogEntry, type ModelSlotName, type ModelsSettings } from "@/src/core";
 import { prettyModel } from "@/components/usage-format";
 import { ModelMenuList } from "@/components/settings/model-menu";
 import { MenuShell } from "@/components/menu-shell";
@@ -129,6 +129,8 @@ export function SetupKeysBody({
 	onValue,
 	onSave,
 	menuAnchor,
+	baseUrl = "",
+	onBaseUrl,
 }: {
 	/** The full provider roster (GET /api/keys providers) — undefined
 	 *  while it loads; the picker renders an honest empty state then. */
@@ -137,6 +139,9 @@ export function SetupKeysBody({
 	 *  provider…". */
 	provider: ProviderKeyInfo | null;
 	value: string;
+	/** The OpenAI-compatible provider's base URL (its key is optional). */
+	baseUrl?: string;
+	onBaseUrl?: (v: string) => void;
 	saving: boolean;
 	error: string | null;
 	menuOpen: boolean;
@@ -181,24 +186,40 @@ export function SetupKeysBody({
 				</div>
 				{provider && (
 					<div className="flex max-w-96 items-center gap-2">
+						{provider.id === OPENAI_COMPATIBLE_PROVIDER_ID && (
+							<input
+								type="text"
+								value={baseUrl}
+								onChange={(e) => onBaseUrl?.(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" && baseUrl.trim()) onSave();
+								}}
+								placeholder="Base URL, e.g. https://host/v1"
+								aria-label={`${provider.label} base URL`}
+								data-testid="setup-key-baseurl"
+								disabled={saving}
+								autoFocus
+								className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+							/>
+						)}
 						<input
 							type="text"
 							value={value}
 							onChange={(e) => onValue(e.target.value)}
 							onKeyDown={(e) => {
-								if (e.key === "Enter" && value.trim()) onSave();
+								if (e.key === "Enter" && (provider.id === OPENAI_COMPATIBLE_PROVIDER_ID ? baseUrl.trim() : value.trim())) onSave();
 							}}
-							placeholder="Paste key…"
+							placeholder={provider.id === OPENAI_COMPATIBLE_PROVIDER_ID ? "API key (optional)" : "Paste key…"}
 							aria-label={`${provider.label} key`}
 							data-testid="setup-key-input"
 							disabled={saving}
-							autoFocus
+							autoFocus={provider.id !== OPENAI_COMPATIBLE_PROVIDER_ID}
 							className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 						/>
 						<button
 							type="button"
 							onClick={onSave}
-							disabled={saving || !value.trim()}
+							disabled={saving || !(provider.id === OPENAI_COMPATIBLE_PROVIDER_ID ? baseUrl.trim() : value.trim())}
 							data-testid="setup-key-save"
 							className="shrink-0 rounded-sm border border-border bg-background px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-40"
 						>
@@ -245,6 +266,7 @@ export function SetupDialog({
 	const [keyProviders, setKeyProviders] = useState<ProviderKeyInfo[] | undefined>(undefined);
 	const [keyProvider, setKeyProvider] = useState<ProviderKeyInfo | null>(null);
 	const [keyValue, setKeyValue] = useState("");
+	const [keyBaseUrl, setKeyBaseUrl] = useState("");
 	const [keySaving, setKeySaving] = useState(false);
 	const [keyError, setKeyError] = useState<string | null>(null);
 	const [keyMenuOpen, setKeyMenuOpen] = useState(false);
@@ -353,22 +375,34 @@ export function SetupDialog({
 	 *  the stage flips to the pickers on its own; the dialog stays mounted
 	 *  the whole way. Shape-gate 400s keep their user-facing line inline. */
 	async function saveKey() {
-		if (!keyProvider || !keyValue.trim() || keySaving) return;
+		if (!keyProvider || keySaving) return;
+		const custom = keyProvider.id === OPENAI_COMPATIBLE_PROVIDER_ID;
+		if (custom ? !keyBaseUrl.trim() : !keyValue.trim()) return;
 		setKeySaving(true);
 		setKeyError(null);
-		const res = await fetch(`/api/keys/${encodeURIComponent(keyProvider.envVar)}`, {
-			method: "PUT",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ value: keyValue }),
-		}).catch(() => null);
-		setKeySaving(false);
-		if (!res || !res.ok) {
-			const body = (await res?.json().catch(() => ({}))) as { error?: string } | undefined;
-			setKeyError(res ? (body?.error ?? `Save failed (${res.status})`) : "Save failed. Check your connection and try again.");
-			return;
+		// The custom endpoint: base URL (required) then key (optional), then
+		// one /models scan so the pickers list what it serves.
+		const writes: [string, string][] = custom
+			? [[OPENAI_COMPATIBLE_BASE_URL_VAR, keyBaseUrl], ...(keyValue.trim() ? [[OPENAI_COMPATIBLE_API_KEY_VAR, keyValue] as [string, string]] : [])]
+			: [[keyProvider.envVar, keyValue]];
+		for (const [id, value] of writes) {
+			const res = await fetch(`/api/keys/${encodeURIComponent(id)}`, {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ value }),
+			}).catch(() => null);
+			if (!res || !res.ok) {
+				setKeySaving(false);
+				const body = (await res?.json().catch(() => ({}))) as { error?: string } | undefined;
+				setKeyError(res ? (body?.error ?? `Save failed (${res.status})`) : "Save failed. Check your connection and try again.");
+				return;
+			}
 		}
+		if (custom) await fetch("/api/keys/openai-compatible/scan", { method: "POST" }).catch(() => null);
+		setKeySaving(false);
 		setKeyProvider(null);
 		setKeyValue("");
+		setKeyBaseUrl("");
 		notifySettingsSaved("keys");
 	}
 
@@ -449,6 +483,8 @@ export function SetupDialog({
 									setKeyError(null);
 								}}
 								onValue={setKeyValue}
+								baseUrl={keyBaseUrl}
+								onBaseUrl={setKeyBaseUrl}
 								onSave={() => void saveKey()}
 							/>
 						)}
