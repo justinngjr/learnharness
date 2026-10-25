@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { practiceDraftKey, usePersistedDraft } from "@/components/draft-store";
 import { ChevronRightIcon } from "lucide-react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,13 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 	// discipline): a submit resuming after `await finishDictation()` reads
 	// the tail, never a stale closure.
 	const thinkingRef = useRef("");
+	// The draft outlives the view (owner report 2026-10-25): stored under
+	// the problem's tool call until submitted.
+	const applyThinking = useCallback((v: string) => {
+		thinkingRef.current = v;
+		setThinking(v);
+	}, []);
+	usePersistedDraft(practiceDraftKey(problemCallId), thinking, applyThinking);
 
 	useDictationTarget(
 		useCallback(

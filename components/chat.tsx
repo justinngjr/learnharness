@@ -26,6 +26,7 @@ import { Composer } from "@/components/composer";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { blurAfterPointerClick } from "@/components/focus-hygiene";
 import { dockStateKey } from "@/components/dock-state-key";
+import { clearQuestionDrafts, composerDraftKey, questionDraftKey, usePersistedDraft } from "@/components/draft-store";
 import { QueuedSteersBody, type QueuedSteerLine } from "@/components/queued-steers";
 import { DictationBar, finishDictation, joinDictation, useDictation } from "@/components/dictation";
 import { useFieldCycle } from "@/components/field-cycle";
@@ -409,6 +410,7 @@ export function Chat({
 				const question = (p.input as { question?: string } | null)?.question ?? "";
 				const reading = readingThinkingRef.current.trim() || undefined;
 				clearReadingThinking();
+				clearQuestionDrafts(p.toolCallId);
 				const answer = dismissedAnswer(toolQuestionKind(p.tool), question);
 				void dismissQuestion(
 					p.toolCallId,
@@ -537,11 +539,11 @@ export function Chat({
 		setReadingThinking("");
 	}, []);
 	const pendingQuestionId = pending?.toolCallId ?? null;
-	useEffect(() => {
-		// A new pending question never inherits the previous one's draft.
-		readingThinkingRef.current = "";
-		setReadingThinking("");
-	}, [pendingQuestionId]);
+	// A new pending question never inherits the previous one's draft: the
+	// field takes the stored draft of ITS question (empty when none), and
+	// the draft outlives the view (owner report 2026-10-25) — a chat switch
+	// mid-reading no longer loses the box.
+	usePersistedDraft(questionDraftKey(pendingQuestionId ?? "-", "reading"), readingThinking, applyReadingThinking);
 
 	// The phase at every message (one linear fold): the transcript draws a
 	// color-coded dotted divider at each boundary; the header chip reads the
@@ -558,6 +560,9 @@ export function Chat({
 		textRef.current = v;
 		setText(v);
 	}, []);
+	// The composer draft outlives the view too (owner report 2026-10-25):
+	// stored per chat until sent.
+	usePersistedDraft(composerDraftKey(chatId), text, applyText);
 	// The BYOK setup flow (owner, 2026-09-22): the persistent CTA and the
 	// refusal interception share one SetupDialog mount. `configured` is
 	// seeded server-side (slotsConfigured on the record) and flips on Save.
@@ -1775,6 +1780,7 @@ export function Chat({
 						// check answer is its only carrier.
 						const reading = readingThinkingRef.current.trim() || undefined;
 						clearReadingThinking();
+						clearQuestionDrafts(pending.toolCallId);
 						submitAnswer(pending.tool, pending.toolCallId, reading ? { ...output, readingThinking: reading } : output);
 					}}
 				/>
