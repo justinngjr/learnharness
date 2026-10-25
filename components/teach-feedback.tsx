@@ -10,19 +10,24 @@
  * nothing is stored without the learner's explicit Confirm.
  */
 import { ThumbsDownIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { MessageAction, MessageActions } from "@/components/ai-elements/message";
 import { LEARNER_PREFERENCE_MAX_CHARS } from "@/src/core";
 
 export const TEACH_DIFFERENTLY_LABEL = "Teach this differently";
+export const PROPOSAL_PENDING_PLACEHOLDER = "Proposing a rule from this message…";
 
+/** The dialog opens on the CLICK, not on the model's reply (2026-10-25):
+ *  `proposing` is the open dialog with the proposal still in flight — the
+ *  learner may already type (and even Confirm) their own rule; the reply
+ *  fills the field only while it is still empty. `proposal` is the settled
+ *  dialog; `failed` marks a proposal call that errored or returned nothing. */
 type Phase =
 	| { kind: "idle" }
-	| { kind: "proposing" }
-	| { kind: "proposal"; text: string; error: string | null; saving: boolean }
-	| { kind: "error"; message: string };
+	| { kind: "proposing"; text: string }
+	| { kind: "proposal"; text: string; error: string | null; saving: boolean; failed: boolean };
 
 async function readError(res: Response): Promise<string> {
 	const detail = (await res.json().catch(() => ({}))) as { error?: string };
@@ -41,34 +46,63 @@ export function TeachDifferentlyAction({
 	fetchImpl?: typeof fetch;
 }) {
 	const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+	// The in-flight proposal request: aborted on Cancel/Confirm/unmount, and
+	// a monotonically increasing id so a late reply from an earlier click
+	// can never touch a newer dialog.
+	const pending = useRef<{ id: number; controller: AbortController } | null>(null);
+	const abortPending = useCallback(() => {
+		pending.current?.controller.abort();
+		pending.current = null;
+	}, []);
+	useEffect(() => abortPending, [abortPending]);
 
 	const propose = useCallback(async () => {
-		setPhase({ kind: "proposing" });
+		abortPending();
+		const controller = new AbortController();
+		const id = (pending.current?.id ?? 0) + 1;
+		pending.current = { id, controller };
+		setPhase({ kind: "proposing", text: "" });
+		const settle = (apply: (typed: string) => Phase) => {
+			if (pending.current?.id !== id) return;
+			pending.current = null;
+			setPhase((prev) => (prev.kind === "proposing" ? apply(prev.text) : prev));
+		};
 		try {
 			const res = await fetchImpl("/api/preferences/propose", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ chatId, messageId }),
+				signal: controller.signal,
 			});
 			if (!res.ok) {
-				setPhase({ kind: "error", message: await readError(res) });
+				const message = await readError(res);
+				settle((typed) => ({ kind: "proposal", text: typed, error: message, saving: false, failed: true }));
 				return;
 			}
 			const { proposal } = (await res.json()) as { proposal: string | null };
-			setPhase({ kind: "proposal", text: proposal ?? "", error: null, saving: false });
+			settle((typed) => ({
+				kind: "proposal",
+				text: typed || (proposal ?? ""),
+				error: null,
+				saving: false,
+				failed: !typed && !proposal,
+			}));
 		} catch (err) {
-			setPhase({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+			if (controller.signal.aborted) return;
+			const message = err instanceof Error ? err.message : String(err);
+			settle((typed) => ({ kind: "proposal", text: typed, error: message, saving: false, failed: true }));
 		}
-	}, [chatId, messageId, fetchImpl]);
+	}, [chatId, messageId, fetchImpl, abortPending]);
 
 	const confirm = useCallback(
-		async (text: string) => {
+		async (text: string, failed: boolean) => {
+			abortPending();
 			const clean = text.trim();
 			if (!clean) {
-				setPhase({ kind: "proposal", text, error: "Write the rule first.", saving: false });
+				setPhase({ kind: "proposal", text, error: "Write the rule first.", saving: false, failed });
 				return;
 			}
-			setPhase({ kind: "proposal", text, error: null, saving: true });
+			setPhase({ kind: "proposal", text, error: null, saving: true, failed });
 			try {
 				const res = await fetchImpl("/api/preferences", {
 					method: "POST",
@@ -76,18 +110,30 @@ export function TeachDifferentlyAction({
 					body: JSON.stringify({ text: clean, source: "feedback" }),
 				});
 				if (!res.ok) {
-					setPhase({ kind: "proposal", text, error: await readError(res), saving: false });
+					setPhase({ kind: "proposal", text, error: await readError(res), saving: false, failed });
 					return;
 				}
 				setPhase({ kind: "idle" });
 			} catch (err) {
-				setPhase({ kind: "proposal", text, error: err instanceof Error ? err.message : String(err), saving: false });
+				setPhase({ kind: "proposal", text, error: err instanceof Error ? err.message : String(err), saving: false, failed });
 			}
 		},
-		[fetchImpl],
+		[fetchImpl, abortPending],
 	);
 
-	const close = useCallback(() => setPhase({ kind: "idle" }), []);
+	const close = useCallback(() => {
+		abortPending();
+		setPhase({ kind: "idle" });
+	}, [abortPending]);
+	const edit = useCallback(
+		(text: string) =>
+			setPhase((prev) =>
+				prev.kind === "proposing"
+					? { kind: "proposing", text }
+					: { kind: "proposal", text, error: null, saving: false, failed: prev.kind === "proposal" && prev.failed },
+			),
+		[],
+	);
 	const busy = phase.kind === "proposing";
 
 	return (
@@ -104,25 +150,26 @@ export function TeachDifferentlyAction({
 					<ThumbsDownIcon className={busy ? "size-3.5 animate-pulse" : "size-3.5"} />
 				</MessageAction>
 			</MessageActions>
+			{phase.kind === "proposing" && (
+				<PreferenceProposalDialog
+					text={phase.text}
+					error={null}
+					saving={false}
+					proposing
+					onChange={edit}
+					onCancel={close}
+					onConfirm={() => void confirm(phase.text, false)}
+				/>
+			)}
 			{phase.kind === "proposal" && (
 				<PreferenceProposalDialog
 					text={phase.text}
 					error={phase.error}
 					saving={phase.saving}
-					onChange={(text) => setPhase({ kind: "proposal", text, error: null, saving: false })}
+					failed={phase.failed}
+					onChange={edit}
 					onCancel={close}
-					onConfirm={() => void confirm(phase.text)}
-				/>
-			)}
-			{phase.kind === "error" && (
-				<PreferenceProposalDialog
-					text=""
-					error={phase.message}
-					saving={false}
-					failed
-					onChange={(text) => setPhase({ kind: "proposal", text, error: null, saving: false })}
-					onCancel={close}
-					onConfirm={close}
+					onConfirm={() => void confirm(phase.text, phase.failed)}
 				/>
 			)}
 		</>
@@ -133,6 +180,7 @@ export function PreferenceProposalBody({
 	text,
 	error,
 	saving,
+	proposing = false,
 	failed = false,
 	onChange,
 	onCancel,
@@ -141,6 +189,9 @@ export function PreferenceProposalBody({
 	text: string;
 	error: string | null;
 	saving: boolean;
+	/** The proposal call is still in flight — the field is empty and
+	 *  editable; whatever the learner types is kept when the reply lands. */
+	proposing?: boolean;
 	/** The proposal call itself failed — the field is empty, the learner
 	 *  may still write a rule by hand. */
 	failed?: boolean;
@@ -171,6 +222,7 @@ export function PreferenceProposalBody({
 					onChange={(e) => onChange(e.target.value)}
 					maxLength={LEARNER_PREFERENCE_MAX_CHARS}
 					rows={3}
+					placeholder={proposing ? PROPOSAL_PENDING_PLACEHOLDER : undefined}
 					autoFocus
 					aria-label="Preference rule"
 					data-testid="preference-proposal-text"
@@ -181,7 +233,12 @@ export function PreferenceProposalBody({
 						{error}
 					</p>
 				)}
-				<div className="mt-4 flex justify-end gap-2">
+				<div className="mt-4 flex items-center justify-end gap-2">
+					{proposing && (
+						<span className="mr-auto animate-pulse text-xs text-muted-foreground" data-testid="preference-proposal-pending">
+							Proposing…
+						</span>
+					)}
 					<button
 						type="button"
 						data-testid="preference-proposal-cancel"

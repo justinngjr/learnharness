@@ -10,7 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseHTML } from "linkedom";
 import { LearnerPreferencesSection } from "../components/settings/learner-preferences-section.tsx";
-import { TeachDifferentlyAction, TEACH_DIFFERENTLY_LABEL } from "../components/teach-feedback.tsx";
+import { PROPOSAL_PENDING_PLACEHOLDER, TeachDifferentlyAction, TEACH_DIFFERENTLY_LABEL } from "../components/teach-feedback.tsx";
 import type { LearnerPreference } from "../src/core/learner-preferences.ts";
 
 (globalThis as Record<string, unknown>).React = React;
@@ -145,13 +145,141 @@ describe("👎 Teach this differently", () => {
 		assert.equal($('[data-testid="preference-proposal-dialog"]'), null);
 	});
 
-	it("a null proposal opens the dialog empty with Confirm disabled", async () => {
+	it("a null proposal keeps the dialog open, empty, with the failed wording and Confirm disabled", async () => {
 		const log: Array<{ url: string; body: unknown }> = [];
 		await act(async () => root.render(<TeachDifferentlyAction chatId="c1" messageId="a1" fetchImpl={fakeFetch(null, log)} />));
 		await click($('[data-testid="teach-differently"]'));
 		await flush();
 		const field = $('[data-testid="preference-proposal-text"]') as HTMLTextAreaElement;
 		assert.equal(field.value, "");
+		assert.match($('[data-testid="preference-proposal-dialog"]')!.textContent ?? "", /could not propose a rule/);
+		assert.equal($('[data-testid="preference-proposal-pending"]'), null);
 		assert.equal(($('[data-testid="preference-proposal-confirm"]') as HTMLButtonElement).disabled, true);
+	});
+
+	/** A propose call the test settles by hand (the model takes seconds). */
+	function slowFetch(log: Array<{ url: string; body: unknown; signal?: AbortSignal }>) {
+		let settle!: (res: Response) => void;
+		let fail!: (err: unknown) => void;
+		const reply = new Promise<Response>((resolve, reject) => {
+			settle = resolve;
+			fail = reject;
+		});
+		const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			log.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null, signal: init?.signal ?? undefined });
+			if (url.endsWith("/propose")) return reply;
+			return Response.json({ preference: { id: "n", text: "x", createdAt: "", source: "feedback" }, preferences: [] });
+		}) as typeof fetch;
+		return {
+			fetchImpl,
+			resolve: (proposal: string | null) => settle(Response.json({ proposal })),
+			reject: fail,
+			rejectResponse: () => settle(Response.json({ error: "No conversation model" }, { status: 503 })),
+		};
+	}
+	const dialog = () => $('[data-testid="preference-proposal-dialog"]');
+	const field = () => $('[data-testid="preference-proposal-text"]') as HTMLTextAreaElement;
+	const confirmButton = () => $('[data-testid="preference-proposal-confirm"]') as HTMLButtonElement;
+
+	it("click opens the dialog at once: empty editable field, pending hint, Confirm disabled until there is text", async () => {
+		const log: Array<{ url: string; body: unknown }> = [];
+		const slow = slowFetch(log);
+		await act(async () => root.render(<TeachDifferentlyAction chatId="c1" messageId="a1" fetchImpl={slow.fetchImpl} />));
+		await click($('[data-testid="teach-differently"]'));
+		assert.ok(dialog(), "dialog shown before the proposal arrives");
+		assert.equal(log.length, 1, "proposal requested");
+		assert.equal(field().value, "");
+		assert.equal(field().getAttribute("placeholder"), PROPOSAL_PENDING_PLACEHOLDER);
+		assert.ok($('[data-testid="preference-proposal-pending"]'), "Proposing… indicator");
+		assert.equal(confirmButton().disabled, true);
+		assert.doesNotMatch(dialog()!.textContent ?? "", /could not propose/);
+
+		await type(field(), "Slow down");
+		assert.equal(confirmButton().disabled, false, "the learner may confirm their own rule without waiting");
+
+		slow.resolve("Avoid calling steps trivial");
+		await flush();
+		assert.equal(field().value, "Slow down", "the late proposal never overwrites typed text");
+		assert.equal($('[data-testid="preference-proposal-pending"]'), null);
+	});
+
+	it("the proposal fills the field only while it is still empty", async () => {
+		const log: Array<{ url: string; body: unknown }> = [];
+		const slow = slowFetch(log);
+		await act(async () => root.render(<TeachDifferentlyAction chatId="c1" messageId="a1" fetchImpl={slow.fetchImpl} />));
+		await click($('[data-testid="teach-differently"]'));
+		assert.equal(field().value, "");
+		slow.resolve("Avoid calling steps trivial");
+		await flush();
+		assert.equal(field().value, "Avoid calling steps trivial");
+		assert.equal(field().getAttribute("placeholder"), null);
+		assert.equal($('[data-testid="preference-proposal-pending"]'), null);
+		assert.equal(confirmButton().disabled, false);
+	});
+
+	it("Cancel while pending aborts the request; a late reply neither reopens nor changes anything", async () => {
+		const log: Array<{ url: string; body: unknown; signal?: AbortSignal }> = [];
+		const slow = slowFetch(log);
+		await act(async () => root.render(<TeachDifferentlyAction chatId="c1" messageId="a1" fetchImpl={slow.fetchImpl} />));
+		await click($('[data-testid="teach-differently"]'));
+		assert.ok(dialog());
+		await click($('[data-testid="preference-proposal-cancel"]'));
+		assert.equal(dialog(), null);
+		assert.equal(log[0]!.signal?.aborted, true, "the fetch was aborted");
+		slow.resolve("Avoid calling steps trivial");
+		await flush();
+		assert.equal(dialog(), null, "late reply ignored");
+		assert.equal(log.length, 1, "nothing written");
+	});
+
+	it("Confirm while pending saves the typed rule and drops the late reply", async () => {
+		const log: Array<{ url: string; body: unknown; signal?: AbortSignal }> = [];
+		const slow = slowFetch(log);
+		await act(async () => root.render(<TeachDifferentlyAction chatId="c1" messageId="a1" fetchImpl={slow.fetchImpl} />));
+		await click($('[data-testid="teach-differently"]'));
+		await type(field(), "Justify every step");
+		await click(confirmButton());
+		await flush();
+		assert.equal(log.length, 2);
+		assert.deepEqual(log[1]!.body, { text: "Justify every step", source: "feedback" });
+		assert.equal(log[0]!.signal?.aborted, true);
+		assert.equal(dialog(), null);
+		slow.resolve("Avoid calling steps trivial");
+		await flush();
+		assert.equal(dialog(), null, "late reply ignored");
+	});
+
+	it("a failed proposal keeps the dialog open with the failed wording; the learner can still write and confirm", async () => {
+		const log: Array<{ url: string; body: unknown }> = [];
+		const slow = slowFetch(log);
+		await act(async () => root.render(<TeachDifferentlyAction chatId="c1" messageId="a1" fetchImpl={slow.fetchImpl} />));
+		await click($('[data-testid="teach-differently"]'));
+		slow.reject(new Error("model unreachable"));
+		await flush();
+		assert.ok(dialog(), "dialog stays open");
+		assert.match(dialog()!.textContent ?? "", /could not propose a rule/);
+		assert.equal($('[data-testid="preference-proposal-error"]')?.textContent, "model unreachable");
+		assert.equal($('[data-testid="preference-proposal-pending"]'), null);
+		assert.equal(field().value, "");
+		await type(field(), "Use smaller steps");
+		await click(confirmButton());
+		await flush();
+		assert.deepEqual(log[1]!.body, { text: "Use smaller steps", source: "feedback" });
+		assert.equal(dialog(), null);
+	});
+
+	it("a non-OK proposal response shows its error with the failed wording and keeps typed text", async () => {
+		const log: Array<{ url: string; body: unknown }> = [];
+		const slow = slowFetch(log);
+		await act(async () => root.render(<TeachDifferentlyAction chatId="c1" messageId="a1" fetchImpl={slow.fetchImpl} />));
+		await click($('[data-testid="teach-differently"]'));
+		await type(field(), "Keep going");
+		slow.rejectResponse();
+		await flush();
+		assert.ok(dialog());
+		assert.match(dialog()!.textContent ?? "", /could not propose a rule/);
+		assert.equal($('[data-testid="preference-proposal-error"]')?.textContent, "No conversation model");
+		assert.equal(field().value, "Keep going");
 	});
 });

@@ -26,12 +26,14 @@ import {
 import { sanitizeUserSettings, type UserSettings } from "../src/core/settings.ts";
 import type { ChatStore, SettingsStore } from "../src/core/ports.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
+import { piEngineForSpec, type ResolvedModelSpec } from "../src/agent/models.ts";
 import { composeInstructions } from "../src/agent/teacher-agent.ts";
 import { withLearnerPreferences } from "../src/agent/learner-preferences-prompt.ts";
 import { parseLearnerPreferencesSettingsBody } from "../src/server/settings-body.ts";
 import {
 	appendLearnerPreference,
 	listLearnerPreferences,
+	PROPOSAL_THINKING_LEVEL,
 	ProposalTargetError,
 	proposeLearnerPreference,
 	writeLearnerPreferences,
@@ -232,6 +234,33 @@ describe("learner preferences — the 👎 propose flow (model mocked)", () => {
 	it("an unusable reply yields a null proposal (the dialog still lets the learner type one)", async () => {
 		const { proposal } = await proposeLearnerPreference("c1", "a1", { chatStore, settingsStore: memorySettingsStore(), complete: async () => "\n" });
 		assert.equal(proposal, null);
+	});
+
+	it("builds the engine on the chat's own model at the lowest thinking level, not the chat's", async () => {
+		assert.equal(PROPOSAL_THINKING_LEVEL, "off");
+		const specs: ResolvedModelSpec[] = [];
+		const stop = new Error("stop before the model call");
+		const highChat = {
+			getChat: () => ({
+				id: "c1",
+				messages,
+				settings: { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" }, thinkingLevel: "high" },
+			}),
+		} as unknown as ChatStore;
+		await assert.rejects(
+			proposeLearnerPreference("c1", "a1", {
+				chatStore: highChat,
+				settingsStore: memorySettingsStore(),
+				engineForSpec: (spec) => {
+					specs.push(spec);
+					throw stop;
+				},
+			}),
+			stop,
+		);
+		assert.deepEqual(specs, [{ provider: "openrouter", id: "z-ai/glm-5.3-flash", thinkingLevel: "off" }]);
+		// glm cannot disable thinking: the production factory clamps "off" up to its lowest level.
+		assert.equal(piEngineForSpec(specs[0]!, false).level, "low");
 	});
 });
 
