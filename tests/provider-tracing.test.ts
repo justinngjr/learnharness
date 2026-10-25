@@ -1,6 +1,8 @@
 /** JS matcher + config-policy regressions; native Turbopack needs the real payload gate. */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { describe, it } from "node:test";
 import nextConfig from "../next.config.ts";
 
@@ -47,7 +49,8 @@ describe("standalone JavaScript tracing exclusions and native workaround policy"
 			"node_modules/@napi-rs/canvas-*/**/*",
 			"node_modules/@resvg/resvg-js-*/**/*",
 			"node_modules/@earendil-works/pi-ai/dist/providers/data/**/*",
-			"node_modules/@earendil-works/pi-ai/dist/auth/oauth/{load,github-copilot,xai,device-code}.js",
+			"node_modules/@earendil-works/pi-ai/dist/auth/oauth/{load,github-copilot,xai,device-code,openai-codex,callback-server,pkce}.js",
+			"node_modules/@earendil-works/pi-ai/dist/utils/{oauth-page,provider-env}.js",
 			"node_modules/@earendil-works/pi-ai/dist/utils/sleep.js",
 			"node_modules/@earendil-works/pi-agent-core/dist/**/*.json",
 			"node_modules/gcp-metadata/**/*",
@@ -60,5 +63,26 @@ describe("standalone JavaScript tracing exclusions and native workaround policy"
 		const included = picomatch(closure, { dot: true });
 		for (const file of ["node_modules/gcp-metadata/build/src/index.js", "node_modules/json-bigint/lib/parse.js", "node_modules/bignumber.js/bignumber.js"]) assert.equal(included(file), true, file);
 		for (const file of ["data/private.json", "nested/data/private.json", "auth.json", ".env.local", "node_modules/unrelated/runtime.js", "node_modules/gcp-metadata-lookalike/index.js"]) assert.equal(included(file), false, file);
+	});
+	it("ships the whole static import closure of every native OAuth flow the app offers", () => {
+		// The flows are loaded through variable imports the tracer cannot follow,
+		// so each one — and everything it statically imports — must be listed
+		// explicitly. Missing openai-codex.js here is what made the packaged
+		// app fail Codex sign-in before any URL existed.
+		const includes = nextConfig.outputFileTracingIncludes!["*"]!;
+		const included = picomatch(includes, { dot: true });
+		const pkg = path.resolve("node_modules/@earendil-works/pi-ai");
+		const seen = new Set<string>();
+		const visit = (file: string) => {
+			const relative = path.posix.join("node_modules/@earendil-works/pi-ai", path.relative(pkg, file).split(path.sep).join("/"));
+			if (seen.has(relative)) return;
+			seen.add(relative);
+			// providers/ (and what it imports) is traced statically through the provider factories the server imports.
+			if (relative.startsWith("node_modules/@earendil-works/pi-ai/dist/providers/")) return;
+			assert.equal(included(relative), true, relative);
+			for (const match of fs.readFileSync(file, "utf8").matchAll(/from\s+"(\.{1,2}\/[^"]+)"/g)) visit(path.resolve(path.dirname(file), match[1]!));
+		};
+		for (const flow of ["github-copilot", "xai", "openai-codex"]) visit(path.join(pkg, "dist", "auth", "oauth", `${flow}.js`));
+		assert.equal(seen.has("node_modules/@earendil-works/pi-ai/dist/auth/oauth/callback-server.js"), true);
 	});
 });
