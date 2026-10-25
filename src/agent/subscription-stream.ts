@@ -53,6 +53,8 @@ export function nativeSubscriptionStream(provider: Provider, background: () => b
 				const fetch = options?.fetch ?? globalThis.fetch;
 				const source = provider.streamSimple(transport, subscriptionHistory(normalizeContext(context), logicalModel, nativeId), {
 					...options, apiKey: auth.apiKey, headers: { ...options?.headers, ...auth.headers }, signal, maxRetries: 0,
+					// Codex defaults to a WebSocket transport that bypasses `fetch`; SSE keeps every dispatch behind the admission check below.
+					...(nativeId === "openai-codex" ? { transport: "sse" as const } : {}),
 					fetch: (input, init) => {
 						check(); if (committed) throw new Error("Subscription requests do not retry after dispatch");
 						lifecycle?.beforeDispatch(subscriptionAdmissionScope(scope!)); committed = true; return fetch(input, init);

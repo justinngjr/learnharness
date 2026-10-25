@@ -12,6 +12,8 @@ const marker = process.env.LH_DESKTOP_SERVER, secret = process.env.LH_DESKTOP_AP
 const xaiKey = process.env.XAI_API_KEY, copilotKey = process.env.COPILOT_GITHUB_TOKEN;
 let revision = 1, denied = false, sends = 0;
 const context = normalizeContext({ messages: [{ role: "user", content: "Offline fixture", timestamp: 0 }] });
+// Codex derives the account id from the access token's JWT claims, so its fixture token must parse as one.
+const codexToken = `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" } })).toString("base64url")}.sig`;
 function snapshot(background = true): NativeSubscriptionSnapshot {
 	return {
 		statuses: NATIVE_SUBSCRIPTIONS.map((p) => ({ providerId: p.providerId, available: true, connected: true, pending: false, allowBackgroundUse: background, connectionId: `fixture-${p.providerId}`, epoch: 1, authorityRevision: 1, revision })),
@@ -24,7 +26,7 @@ before(async () => {
 	process.env.XAI_API_KEY = "fixture-must-never-be-used"; process.env.COPILOT_GITHUB_TOKEN = "fixture-api-route-only";
 	Object.defineProperty(process, "connected", { configurable: true, value: true });
 	Object.defineProperty(process, "send", { configurable: true, value: (message: any, callback?: () => void) => {
-		sends++; queueMicrotask(() => emit({ channel: "lh:subscriptions", id: message.id, op: message.op, ...(denied && message.op === "lease" ? { ok: false, error: "fixture expired refresh" } : { ok: true, value: message.op === "snapshot" ? snapshot() : { scope: message.scope, auth: { apiKey: "fixture-oauth-only", ...(message.scope.providerId === "github-copilot" ? { baseUrl: "https://api.business.githubcopilot.com", headers: { "x-fixture-auth": "native-retained" } } : {}) } } }) }));
+		sends++; queueMicrotask(() => emit({ channel: "lh:subscriptions", id: message.id, op: message.op, ...(denied && message.op === "lease" ? { ok: false, error: "fixture expired refresh" } : { ok: true, value: message.op === "snapshot" ? snapshot() : { scope: message.scope, auth: { apiKey: message.scope.providerId === "openai-codex" ? codexToken : "fixture-oauth-only", ...(message.scope.providerId === "github-copilot" ? { baseUrl: "https://api.business.githubcopilot.com", headers: { "x-fixture-auth": "native-retained" } } : {}) } } }) }));
 		callback?.(); return true;
 	} });
 	await refreshSubscriptionModels();
@@ -50,9 +52,10 @@ for (const p of NATIVE_SUBSCRIPTIONS) test(`${p.providerId}: every SDK transport
 			onPayload: (raw, selected) => { payloadObserved = true; assert.equal(selected.provider, p.providerId); return { ...raw as object, model: "caller-cannot-replace-selected" }; },
 			fetch: async (input, init) => {
 				requests++; const request = new Request(input, init), body = await request.json();
-				assert.equal(request.headers.get("authorization"), "Bearer fixture-oauth-only");
+				assert.equal(request.headers.get("authorization"), `Bearer ${p.providerId === "openai-codex" ? codexToken : "fixture-oauth-only"}`);
 				assert.equal(body.model, native.id);
 				if (p.providerId === "github-copilot") { assert.equal(new URL(request.url).origin, "https://api.business.githubcopilot.com"); assert.equal(request.headers.get("x-fixture-auth"), "native-retained"); }
+				else if (p.providerId === "openai-codex") { assert.equal(new URL(request.url).origin, "https://chatgpt.com"); assert.equal(request.headers.get("chatgpt-account-id"), "fixture-account"); }
 				else assert.equal(new URL(request.url).origin, "https://api.x.ai");
 				return new Response('{"error":{"message":"private-fixture-provider-detail"}}', { status: 401, headers: { "content-type": "application/json" } });
 			},

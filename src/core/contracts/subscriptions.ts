@@ -1,12 +1,17 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 
 /** Native SDK IDs stay distinct from the app's persisted connection routes. */
-export type NativeSubscriptionProviderId = "github-copilot" | "xai";
-export type NativeSubscriptionLogicalId = "github-copilot-subscription" | "xai-subscription";
+export type NativeSubscriptionProviderId = "github-copilot" | "xai" | "openai-codex";
+export type NativeSubscriptionLogicalId = "github-copilot-subscription" | "xai-subscription" | "openai-codex-subscription";
 
 export const NATIVE_SUBSCRIPTIONS = [
 	{ providerId: "github-copilot", logicalId: "github-copilot-subscription", label: "GitHub Copilot" },
 	{ providerId: "xai", logicalId: "xai-subscription", label: "Grok" },
+	// ChatGPT through Codex's first-party OAuth client (browser sign-in on
+	// localhost:1455, owner 2026-10-25): workspaces that deny third-party
+	// delegated access (3p_delegated_access_policy_denied) refuse the app's
+	// own ChatGPT agent grant but admit this one.
+	{ providerId: "openai-codex", logicalId: "openai-codex-subscription", label: "ChatGPT via Codex" },
 ] as const;
 
 export interface SubscriptionPrompt {
