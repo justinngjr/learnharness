@@ -404,12 +404,13 @@ function AsideSession({
 /** The transport throws the refusal body verbatim (a JSON envelope for
  *  the BYOK 503); show its `error` line, else the message. */
 function errorText(error: unknown): string {
-	if (error && typeof error === "object" && !(error instanceof Error)) {
-		const o = error as { error?: unknown; message?: unknown };
-		if (typeof o.error === "string") return o.error;
-		if (typeof o.message === "string") return o.message;
+	let raw: string;
+	if (error instanceof Error) raw = error.message;
+	else if (typeof error === "string") raw = error;
+	else {
+		const o = (error ?? {}) as { error?: unknown; message?: unknown };
+		raw = typeof o.error === "string" ? o.error : typeof o.message === "string" ? o.message : String(error);
 	}
-	const raw = error instanceof Error ? error.message : String(error);
 	try {
 		const parsed = JSON.parse(raw) as { error?: unknown };
 		if (typeof parsed.error === "string") return parsed.error;
