@@ -8,8 +8,12 @@
  * strong slot), fed the disliked teacher message and a little surrounding
  * transcript. The result is only ever SHOWN — persistence happens solely
  * through appendLearnerPreference after the learner confirms.
+ *
+ * The call runs at the LOWEST thinking level the model supports
+ * (PROPOSAL_THINKING_LEVEL, clamped by the engine factory): the dialog is
+ * waiting on this round trip, and a one-sentence rule needs no deliberation.
  */
-import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
+import { piEngineForSpec, type PiEngine, type ResolvedModelSpec, type ThinkingLevel } from "../agent/models.ts";
 import { runSubagent } from "../agent/subagents/pi-run.ts";
 import { renderParentTranscript } from "../core/aside.ts";
 import {
@@ -30,6 +34,10 @@ import { effectiveSettings, stores } from "./stores.ts";
 /** How much transcript precedes the disliked message in the side call. */
 const PROPOSAL_CONTEXT_MESSAGES = 6;
 const PROPOSAL_CONTEXT_MAX_CHARS = 8_000;
+/** The proposal's thinking level — "off", which pi's clampThinkingLevel
+ *  raises to the nearest level a model that cannot disable thinking
+ *  supports. The MODEL itself is still the chat's own. */
+export const PROPOSAL_THINKING_LEVEL: ThinkingLevel = "off";
 
 export function listLearnerPreferences(settingsStore: SettingsStore = stores.settingsStore): LearnerPreference[] {
 	return learnerPreferencesOf(settingsStore.readSettings());
@@ -80,6 +88,9 @@ export interface ProposeDeps {
 	settingsStore?: SettingsStore;
 	/** Tests inject a scripted engine; production resolves the chat's model. */
 	engine?: PiEngine;
+	/** Engine factory for the resolved spec (test seam; defaults to
+	 *  piEngineForSpec in the foreground). */
+	engineForSpec?: (spec: ResolvedModelSpec) => PiEngine;
 	/** Tests may bypass pi entirely: (systemPrompt, prompt) → reply text. */
 	complete?: (systemPrompt: string, prompt: string) => Promise<string>;
 }
@@ -123,7 +134,8 @@ export async function proposeLearnerPreference(
 		if (!engine) {
 			const spec = resolveConversationSpec(record.settings, effectiveSettings().models.strong);
 			if (!spec) throw new ModelsNotConfiguredError(["strong"]);
-			engine = piEngineForSpec(spec, false);
+			const engineForSpec = deps.engineForSpec ?? ((s: ResolvedModelSpec) => piEngineForSpec(s, false));
+			engine = engineForSpec({ ...spec, thinkingLevel: PROPOSAL_THINKING_LEVEL });
 		}
 		const result = await runSubagent([], {
 			role: "researcher" as never,
