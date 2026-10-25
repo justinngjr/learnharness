@@ -49,7 +49,7 @@ import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
 import { ArrowRightIcon, CornerDownRightIcon, DumbbellIcon, MessageSquareQuoteIcon, WaypointsIcon } from "lucide-react";
-import { AsideContextCard, AsidePanel } from "@/components/aside-panel";
+import { AsideContextCard, AsidePanel, type AsideRequest } from "@/components/aside-panel";
 import { parseBtw, type AsideContextData, type AsideOrigin } from "@/src/core";
 import type { PlanBlockData } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
@@ -817,46 +817,32 @@ export function Chat({
 	const [planOpen, setPlanOpen] = useState(false);
 	/* ASIDES (2026-10-24 — pi's /btw): a side question over a read-only
 	 * fork of this session. The panel docks right; the aside is its own
-	 * session record, so nothing it does reaches this transcript. */
-	const [asideOpen, setAsideOpen] = useState<{ id: string; question?: string } | null>(null);
-	const [asides, setAsides] = useState<{ id: string; title: string }[]>([]);
-	const [asideMenu, setAsideMenu] = useState(false);
+	 * session record, so nothing it does reaches this transcript.
+	 * Nothing persists until a question is asked (owner 2026-10-25): the
+	 * panel opens as a draft and creates the aside on its first send; the
+	 * sidebar (not a top-bar chip) is where persisted asides are reopened. */
+	const [asideOpen, setAsideOpen] = useState<{ key: number; request: AsideRequest } | null>(null);
+	const asideKey = useRef(0);
 	const [selectionChip, setSelectionChip] = useState<{ text: string; messageId?: string; top: number; left: number } | null>(null);
-	const refreshAsides = useCallback(async () => {
-		if (kind === "aside") return;
-		try {
-			const r = await fetch("/api/chats");
-			if (!r.ok) return;
-			const { chats: list } = (await r.json()) as { chats: { id: string; title: string; kind?: string; aside?: AsideOrigin }[] };
-			setAsides(list.filter((c) => c.kind === "aside" && c.aside?.chatId === chatId).map((c) => ({ id: c.id, title: c.title })));
-		} catch {
-			/* the chip just stays stale */
-		}
-	}, [chatId, kind]);
-	useEffect(() => {
-		void refreshAsides();
-	}, [refreshAsides]);
-	const openAside = useCallback(
-		async (opts: { quote?: string; messageId?: string; question?: string }) => {
-			setSelectionChip(null);
-			window.getSelection()?.removeAllRanges();
-			try {
-				const r = await fetch("/api/chats", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ kind: "aside", aside: { chatId, quote: opts.quote, messageId: opts.messageId } }),
-				});
-				if (!r.ok) return;
-				const created = (await r.json()) as { id: string };
-				setAsideOpen({ id: created.id, question: opts.question });
-				void refreshAsides();
-			} catch {
-				/* no aside — the main chat is untouched either way */
-			}
-		},
-		[chatId, refreshAsides],
-	);
+	const openAside = useCallback((request: AsideRequest) => {
+		setSelectionChip(null);
+		window.getSelection()?.removeAllRanges();
+		asideKey.current += 1;
+		setAsideOpen({ key: asideKey.current, request });
+	}, []);
 	const closeAside = useCallback(() => setAsideOpen(null), []);
+	/* Slash commands from ANY text field in the session (the composer, the
+	 * question dock's answer/thinking field, the reading-thinking field):
+	 * true = consumed. Only `/btw` today. */
+	const interceptCommand = useCallback(
+		(text: string): boolean => {
+			const btw = parseBtw(text.trim());
+			if (btw === null) return false;
+			openAside({ question: btw || undefined });
+			return true;
+		},
+		[openAside],
+	);
 	/* The highlight chip: a non-collapsed selection inside the transcript
 	 * column surfaces "Ask about this" at the selection's top-right. */
 	const onTranscriptMouseUp = useCallback(() => {
@@ -1229,11 +1215,8 @@ export function Chat({
 	 * the composer clears and the question opens an aside over this
 	 * session's context. Works mid-turn too (it steers nothing). */
 	const interceptBtw = (): boolean => {
-		const t = textRef.current.trim();
-		const btw = t ? parseBtw(t) : null;
-		if (btw === null) return false;
+		if (!interceptCommand(textRef.current)) return false;
 		applyText("");
-		void openAside({ question: btw || undefined });
 		return true;
 	};
 	const doSend = () => {
@@ -1394,37 +1377,6 @@ export function Chat({
 					{/* Practice (owner, 2026-10-04): the coverage ring hides —
 				    practice never extracts, so an ever-filling ring with no
 				    run behind it would lie. */}
-					{kind !== "aside" && asides.length > 0 && (
-						<div className="relative">
-							<button
-								type="button"
-								data-testid="asides-chip"
-								onClick={() => setAsideMenu((v) => !v)}
-								className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-								title="Side questions asked in this session"
-							>
-								<CornerDownRightIcon className="size-3" aria-hidden />
-								Asides ({asides.length})
-							</button>
-							{asideMenu && (
-								<div className="absolute right-0 top-full z-30 mt-1 max-h-72 w-72 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md">
-									{asides.map((a) => (
-										<button
-											key={a.id}
-											type="button"
-											onClick={() => {
-												setAsideMenu(false);
-												setAsideOpen({ id: a.id });
-											}}
-											className="block w-full truncate rounded px-2 py-1 text-left text-xs hover:bg-muted"
-										>
-											{a.title}
-										</button>
-									))}
-								</div>
-							)}
-						</div>
-					)}
 					{kind !== "practice" && kind !== "aside" && <CoverageRing chatId={chatId} refreshKey={coverageTick} />}
 					{/* Practice sessions: no phase arc — a quiet Practice tag
 					    instead of the phase chip. Asides: a ↳ parent link. */}
@@ -1754,6 +1706,21 @@ export function Chat({
 					pricing={pricing}
 					onReserve={setDockReserve}
 					dictationSlot={<DictationBar dictation={dictation} />}
+					onCommand={interceptCommand}
+					asideSlot={
+						kind !== "aside" ? (
+							<button
+								type="button"
+								data-testid="aside-button"
+								onClick={() => openAside({})}
+								title="Ask a side question over this lesson's context (or type /btw …). Nothing is written to the lesson."
+								className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-muted hover:text-foreground"
+							>
+								<CornerDownRightIcon className="size-3" aria-hidden />
+								Aside
+							</button>
+						) : undefined
+					}
 					dictationCancel={dictation.cancel}
 					queuedSteers={visibleQueuedSteers(steerQueue, nativeMessages)}
 					setupCta={
@@ -1840,7 +1807,15 @@ export function Chat({
 						Ask about this
 					</button>
 				)}
-				{asideOpen && <AsidePanel asideId={asideOpen.id} initialQuestion={asideOpen.question} onClose={closeAside} />}
+				{asideOpen && (
+					<AsidePanel
+						key={asideOpen.key}
+						parentChatId={chatId}
+						parentTitle={title}
+						request={asideOpen.request}
+						onClose={closeAside}
+					/>
+				)}
 				{planOpen && <PlanPopup messages={messages} onClose={() => setPlanOpen(false)} />}
 				<AbortTurnDialog mode={abortAsk} onClose={() => setAbortAsk(null)} onConfirm={confirmAbort} busy={busy} />
 				</div>
@@ -1995,6 +1970,8 @@ function DockOverlay({
 	plan,
 	onOpenPlan,
 	dictationSlot,
+	asideSlot,
+	onCommand,
 	dictationCancel,
 	setupCta,
 	queuedSteers,
@@ -2036,6 +2013,11 @@ function DockOverlay({
 	/** The dictation strip (STT wave): rendered in the stats bar's middle
 	 *  slot — the mic button + live meter (components/dictation.tsx). */
 	dictationSlot?: React.ReactNode;
+	/** The stats-row aside button (asides, 2026-10-25) — reachable in
+	 *  every dock variant, unlike the composer. */
+	asideSlot?: React.ReactNode;
+	/** Slash commands typed into the dock's fields (`/btw …`): true = consumed. */
+	onCommand?: (text: string) => boolean;
 	/** Esc in a pending question's field stops dictation (the strip is the
 	 *  stats bar's; the stop belongs to the page-owned hook, threaded down). */
 	dictationCancel?: () => void;
@@ -2437,6 +2419,7 @@ function DockOverlay({
 						<ReadingThinkingField
 							value={readingThinking}
 							onChange={onReadingThinking}
+							onCommand={onCommand}
 							onEscape={dictationCancel}
 							onOpen={
 								!expanded
@@ -2469,6 +2452,7 @@ function DockOverlay({
 									onEscape={dictationCancel}
 									dictationClaim={!revealPending}
 									compactionRunning={compactionRunning}
+									onCommand={onCommand}
 								/>
 							) : practice ? (
 								<PracticeDock
@@ -2496,6 +2480,7 @@ function DockOverlay({
 						contextTokens={contextTokens}
 						pricing={pricing}
 						dictationSlot={dictationSlot}
+						trailingSlot={asideSlot}
 						chatId={chatId}
 					/>
 					{/* The scroll-down disc (moved here from the Conversation,

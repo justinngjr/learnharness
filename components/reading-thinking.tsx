@@ -24,9 +24,15 @@ export function ReadingThinkingField({
 	onEscape,
 	onOpen,
 	claim,
+	onCommand,
 }: {
 	value: string;
 	onChange: (v: string) => void;
+	/** Slash commands typed here (asides, 2026-10-25): Enter hands the
+	 *  draft to the page first; true = consumed (the field clears), so
+	 *  `/btw …` opens an aside from the reading field as it does from
+	 *  the composer — the composer is unmounted while a check waits. */
+	onCommand?: (text: string) => boolean;
 	/** Esc in the field stops dictation (threaded from the page's hook). */
 	onEscape?: () => void;
 	/** The check waits CLOSED — Enter opens it (owner, keyboard round
@@ -80,6 +86,12 @@ export function ReadingThinkingField({
 					// (and the universal ⌘/Ctrl+Enter) opens it — the dictation
 					// flush lands HERE first via the caller's finishDictation,
 					// so spoken thoughts ride along. Shift+Enter stays a newline.
+					if (e.key === "Enter" && !e.shiftKey && onCommand?.(value)) {
+						e.preventDefault();
+						e.stopPropagation();
+						onChange("");
+						return;
+					}
 					if (e.key === "Enter" && onOpen !== undefined && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
 						e.preventDefault();
 						e.stopPropagation();

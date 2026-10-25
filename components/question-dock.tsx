@@ -90,6 +90,11 @@ export interface QuestionDockProps {
 	 *  and say so in the hint row. The server registry is the real gate;
 	 *  this is the affordance. */
 	compactionRunning?: boolean;
+	/** Slash commands typed into the answer/thinking field (asides,
+	 *  2026-10-25): submit hands the draft to the page first; true =
+	 *  consumed (the field clears, no answer is built) — `/btw …` opens
+	 *  an aside while a question owns the dock and the composer is gone. */
+	onCommand?: (text: string) => boolean;
 }
 
 export function QuestionDock({
@@ -104,6 +109,7 @@ export function QuestionDock({
 	phase = "probe",
 	dictationClaim = true,
 	compactionRunning = false,
+	onCommand,
 }: QuestionDockProps) {
 	// The probe-phase names (owner, 2026-10-09) canonicalize onto their
 	// teach twins for every dock concern — parse dispatch, labels, kinds:
@@ -158,6 +164,7 @@ export function QuestionDock({
 					onEscape={onEscape}
 					dictationClaim={dictationClaim}
 					compactionRunning={compactionRunning}
+					onCommand={onCommand}
 				/>
 			</div>
 		</>
@@ -253,6 +260,7 @@ function QuestionDockForm({
 	onEscape,
 	dictationClaim = true,
 	compactionRunning = false,
+	onCommand,
 }: Omit<QuestionDockProps, "expanded" | "onExpand" | "reveal">) {
 	const kind = toolQuestionKind(toolName);
 
@@ -365,6 +373,17 @@ function QuestionDockForm({
 			: sel.dontKnow || (sel.otherSelected && other.trim().length > 0) || sel.selected.size > 0;
 
 	const submit = () => {
+		const typed = qd.mode === "text" ? answerTextRef.current : thinkingTextRef.current;
+		if (onCommand?.(typed)) {
+			if (qd.mode === "text") {
+				answerTextRef.current = "";
+				setText("");
+			} else {
+				thinkingTextRef.current = "";
+				setThinking("");
+			}
+			return;
+		}
 		if (!canSubmit || compactionRunning) return;
 		/* FINISH DICTATION FIRST (owner, 2026-10-01): Enter may arrive while
 		 * a run is live with reasoning still in Deepgram's hands. Stop the

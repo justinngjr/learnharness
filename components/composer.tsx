@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowRightIcon, CornerDownLeftIcon, SquareIcon } from "lucide-react";
+import { ArrowRightIcon, CornerDownLeftIcon, CornerDownRightIcon, SquareIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { parseBtw } from "@/src/core";
 import { Hint } from "@/components/ui/hint";
 
 /**
@@ -75,6 +76,10 @@ export function Composer({
 	 *  empty-Enter share it. */
 	onNext?: () => void;
 }) {
+	// /btw feedback (asides, owner 2026-10-25): the moment the draft reads
+	// as the command, an ASIDE tag rides the row and the text takes the
+	// accent — the learner sees it is invoking a command, not chatting.
+	const btw = parseBtw(value) !== null;
 	const act = () => {
 		const action = enterAction({ busy, canSend, nextProblem });
 		if (action === "stop") onStop();
@@ -90,6 +95,16 @@ export function Composer({
 				act();
 			}}
 		>
+			{btw && (
+				<span
+					data-testid="btw-badge"
+					title="Opens an aside — a side question over this lesson's context; nothing is written to the lesson"
+					className="mb-2 ml-1 flex h-6 shrink-0 items-center gap-1 rounded-md bg-primary/15 px-1.5 font-ui text-[10px] font-medium uppercase tracking-wide text-primary"
+				>
+					<CornerDownRightIcon className="size-3" aria-hidden />
+					aside
+				</span>
+			)}
 			<textarea
 				ref={inputRef}
 				value={value}
@@ -116,7 +131,10 @@ export function Composer({
 				placeholder={placeholder}
 				autoFocus={autoFocus}
 				rows={1}
-				className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
+				className={cn(
+					"field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground",
+					btw && "text-primary",
+				)}
 			/>
 			{/* The button follows the text (owner report 2026-10-03): while
 				 a turn runs WITH text typed it stays the SEND affordance
