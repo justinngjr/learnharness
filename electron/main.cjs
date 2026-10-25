@@ -614,6 +614,7 @@ async function main() {
 			directory: app.getPath("userData"),
 			loadSDK: () => loadSubscriptionSDK(path.dirname(serverEntry())),
 			openExternal: (target) => shell.openExternal(target),
+			log,
 			onChange: (snapshot) => {
 				subscriptionChild?.send(snapshot);
 				for (const win of BrowserWindow.getAllWindows()) win.webContents.send("lh:subscriptions:changed");

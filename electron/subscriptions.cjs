@@ -186,6 +186,7 @@ function createSubscriptions(options) {
 				entry.blocked = false; entry.authFailed = false; entry.error = undefined;
 			});
 		} catch (error) {
+			if (error?.code !== "cancel") options.log?.(`${providerId} sign-in failed: ${error?.stack ?? error}`);
 			if (active() && !entry.fatal) entry.error = error?.code === "cancel" ? undefined : MESSAGES.login;
 			if (!abort.signal.aborted) throw failure(entry.fatal ? "storage" : "login");
 		} finally { attempt.prompt?.reject(); if (entry.attempt === attempt) { entry.attempt = null; changed(entry); } }
