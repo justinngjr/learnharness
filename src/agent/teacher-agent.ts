@@ -48,7 +48,7 @@ import { usageWasAdmitted } from "./subscription-request-cycle.ts";
 
 /** Which agent's prompt directory to compose. Practice (2026-10-04)
  *  composes ONLY its own directory — see prompt-segments.ts. */
-export type AgentKind = "prober" | "teacher" | "practice";
+export type AgentKind = "prober" | "teacher" | "practice" | "aside";
 
 // P2 (2026-09-19): segment discovery + override resolution live in ONE
 // canonical place now — src/store/prompt-overrides.ts (listSourceSegments
@@ -88,6 +88,7 @@ const composedInstructions: Record<AgentKind, string> = {
 	prober: composeInstructions("prober"),
 	teacher: composeInstructions("teacher"),
 	practice: composeInstructions("practice"),
+	aside: composeInstructions("aside"),
 };
 
 // Money channel (wave 4): the chat-handler passes a per-turn collector;
@@ -320,6 +321,16 @@ export function bareQuestionTools(): Record<string, AgentTool<any>> {
 export function createPracticeAgent(ctx: PracticeToolContext, opts: AgentBuildOptions = {}) {
 	const tools = opts.tools ?? practiceTools(ctx);
 	return baseAgentOptions("practice", opts, Object.values(tools));
+}
+
+/**
+ * The ASIDE agent (2026-10-24 — pi's `/btw`): a side question over a
+ * read-only fork of the parent transcript (the aside-context marker is
+ * message[0]). NO tools — it answers; it never quizzes, plans, or writes
+ * to the graph. The handler injects the session's conversation engine.
+ */
+export function createAsideAgent(opts: AgentBuildOptions = {}) {
+	return baseAgentOptions("aside", opts, []);
 }
 
 export type ProberAgent = ReturnType<typeof createProberAgent>;

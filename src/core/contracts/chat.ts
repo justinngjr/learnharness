@@ -25,7 +25,19 @@ import type { EmissionStats } from "./graph.ts";
  *  the default and ABSENT on pre-practice records (no migration — absence
  *  reads as teach); "practice" marks an adaptive-practice session — the
  *  practice agent, its two tools, no extraction, no graph writes. */
-export type ChatKind = "teach" | "practice";
+export type ChatKind = "teach" | "practice" | "aside";
+
+/** Where an ASIDE session came from (asides, 2026-10-24 — pi's `/btw`
+ *  semantics): a read-only fork of a parent session's transcript for a
+ *  side question. `quote` is the highlighted passage (absent for a plain
+ *  `/btw`); `messageId` the parent message it was selected in, when known.
+ *  The parent record never learns about the aside. */
+export interface AsideOrigin {
+	chatId: string;
+	title: string;
+	quote?: string;
+	messageId?: string;
+}
 
 export interface ChatRecord {
 	id: string;
@@ -35,6 +47,8 @@ export interface ChatRecord {
 	messages: LhMessage[];
 	/** The session's kind — absent = teach (pre-practice records). */
 	kind?: ChatKind;
+	/** Aside sessions only: the parent session + highlighted passage. */
+	aside?: AsideOrigin;
 	/** The session's plan tree (vision §2) — written by plan tools via saveTree. */
 	tree?: PlanTree;
 	/** Append-only usage log (observability, 2026-09): one entry per model
@@ -263,6 +277,8 @@ export interface ChatSummary {
 	updatedAt: string;
 	/** Normalized kind (absent record field reads as teach). */
 	kind: ChatKind;
+	/** Aside sessions: the parent + quote (the sidebar nests on chatId). */
+	aside?: AsideOrigin;
 	messageCount: number;
 	/** The session's current phase, derived from the stored plan tree. */
 	phase: Phase3;

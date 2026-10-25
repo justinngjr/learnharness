@@ -48,7 +48,9 @@ import { PlanBlock, PlanPopup, latestTree } from "@/components/plan-block";
 import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
-import { ArrowRightIcon, DumbbellIcon, WaypointsIcon } from "lucide-react";
+import { ArrowRightIcon, CornerDownRightIcon, DumbbellIcon, MessageSquareQuoteIcon, WaypointsIcon } from "lucide-react";
+import { AsideContextCard, AsidePanel } from "@/components/aside-panel";
+import { parseBtw, type AsideContextData, type AsideOrigin } from "@/src/core";
 import type { PlanBlockData } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { SessionFind } from "@/components/session-find";
@@ -58,7 +60,7 @@ import { ThinkingCard, type PracticeThinkingData } from "@/components/practice-c
 import { GraphContextCard, type GraphContextData } from "@/components/graph-context-card";
 import { TopBar } from "@/components/top-bar";
 import type { ArtifactPartProps, JobRecord, Phase3, QuestionAnswerData, TurnUsage, SessionPricing } from "@/src/core";
-import type { LhViewMessage } from "@/src/core";
+import type { ChatKind, LhViewMessage } from "@/src/core";
 import { PhaseChip, PhaseDivider } from "@/components/phase-divider";
 import {
 	CompactionCutDivider,
@@ -203,14 +205,18 @@ export function Chat({
 	initiallyCompacting = false,
 	initialConfigured = false,
 	kind = "teach",
+	asideOrigin,
 }: {
 	chatId: string;
 	title: string;
 	initialMessages: LhMessage[];
+	/** Aside sessions opened as a full page: the parent + quote (the
+	 *  header's "↳ parent" chip). */
+	asideOrigin?: AsideOrigin;
 	/** The session kind (practice sessions, owner 2026-10-04): practice
 	 *  renders no phase chip (no probe→teach arc applies) and a Practice
 	 *  tag rides the header instead. */
-	kind?: "teach" | "practice";
+	kind?: ChatKind;
 	initialPrompt?: string;
 	/** A teacher turn is running server-side but attached to no client
 	 * (navigated away mid-turn, returned while in flight). */
@@ -809,6 +815,86 @@ export function Chat({
 	// The live plan popup (wave 4): opened by any transcript plan block, the
 	// top-bar plan chip, and the dock band's marginalia.
 	const [planOpen, setPlanOpen] = useState(false);
+	/* ASIDES (2026-10-24 — pi's /btw): a side question over a read-only
+	 * fork of this session. The panel docks right; the aside is its own
+	 * session record, so nothing it does reaches this transcript. */
+	const [asideOpen, setAsideOpen] = useState<{ id: string; question?: string } | null>(null);
+	const [asides, setAsides] = useState<{ id: string; title: string }[]>([]);
+	const [asideMenu, setAsideMenu] = useState(false);
+	const [selectionChip, setSelectionChip] = useState<{ text: string; messageId?: string; top: number; left: number } | null>(null);
+	const refreshAsides = useCallback(async () => {
+		if (kind === "aside") return;
+		try {
+			const r = await fetch("/api/chats");
+			if (!r.ok) return;
+			const { chats: list } = (await r.json()) as { chats: { id: string; title: string; kind?: string; aside?: AsideOrigin }[] };
+			setAsides(list.filter((c) => c.kind === "aside" && c.aside?.chatId === chatId).map((c) => ({ id: c.id, title: c.title })));
+		} catch {
+			/* the chip just stays stale */
+		}
+	}, [chatId, kind]);
+	useEffect(() => {
+		void refreshAsides();
+	}, [refreshAsides]);
+	const openAside = useCallback(
+		async (opts: { quote?: string; messageId?: string; question?: string }) => {
+			setSelectionChip(null);
+			window.getSelection()?.removeAllRanges();
+			try {
+				const r = await fetch("/api/chats", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ kind: "aside", aside: { chatId, quote: opts.quote, messageId: opts.messageId } }),
+				});
+				if (!r.ok) return;
+				const created = (await r.json()) as { id: string };
+				setAsideOpen({ id: created.id, question: opts.question });
+				void refreshAsides();
+			} catch {
+				/* no aside — the main chat is untouched either way */
+			}
+		},
+		[chatId, refreshAsides],
+	);
+	const closeAside = useCallback(() => setAsideOpen(null), []);
+	/* The highlight chip: a non-collapsed selection inside the transcript
+	 * column surfaces "Ask about this" at the selection's top-right. */
+	const onTranscriptMouseUp = useCallback(() => {
+		if (kind === "aside") return;
+		window.setTimeout(() => {
+			const sel = window.getSelection();
+			const scope = sessionFindScopeRef.current;
+			if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !scope) {
+				setSelectionChip(null);
+				return;
+			}
+			const text = sel.toString().replace(/\s+\n/g, "\n").trim();
+			const range = sel.getRangeAt(0);
+			const node = range.commonAncestorContainer;
+			const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+			if (text.length < 2 || !el || !scope.contains(el) || el.closest("textarea, input, [data-testid=\"aside-panel\"]")) {
+				setSelectionChip(null);
+				return;
+			}
+			const rect = range.getBoundingClientRect();
+			const host = scope.getBoundingClientRect();
+			const messageId = el.closest("[data-source-message-id]")?.getAttribute("data-source-message-id") ?? undefined;
+			setSelectionChip({
+				text: text.slice(0, 4000),
+				messageId,
+				top: Math.max(0, rect.top - host.top - 34),
+				left: Math.min(Math.max(0, rect.right - host.left - 120), host.width - 130),
+			});
+		}, 0);
+	}, [kind]);
+	useEffect(() => {
+		const clear = () => {
+			const sel = window.getSelection();
+			if (!sel || sel.isCollapsed) setSelectionChip(null);
+		};
+		document.addEventListener("selectionchange", clear);
+		return () => document.removeEventListener("selectionchange", clear);
+	}, []);
 	// Real plan presence — gates the marginalia's clickable flank. A JSX
 	// element is always truthy; gating on the node alone mounted a phantom
 	// (invisible, clickable) button in the bottom-right whenever a question
@@ -1139,7 +1225,19 @@ export function Chat({
 		}
 		void dictation.finish().then(doSteerOrSend);
 	};
+	/* /btw <question> (asides, 2026-10-24): never a main-chat message —
+	 * the composer clears and the question opens an aside over this
+	 * session's context. Works mid-turn too (it steers nothing). */
+	const interceptBtw = (): boolean => {
+		const t = textRef.current.trim();
+		const btw = t ? parseBtw(t) : null;
+		if (btw === null) return false;
+		applyText("");
+		void openAside({ question: btw || undefined });
+		return true;
+	};
 	const doSend = () => {
+		if (interceptBtw()) return;
 		if (busy || pending || compacting) return;
 		const t = textRef.current.trim();
 		if (!t) return;
@@ -1158,6 +1256,7 @@ export function Chat({
 	 * time the send's POST resolved, so the steer lands. Idle takes the
 	 * plain send; a raced settle 409s and falls back to exactly that. */
 	const doSteerOrSend = () => {
+		if (interceptBtw()) return;
 		if (pending || compacting) return;
 		const t = textRef.current.trim();
 		if (!t) return;
@@ -1295,10 +1394,52 @@ export function Chat({
 					{/* Practice (owner, 2026-10-04): the coverage ring hides —
 				    practice never extracts, so an ever-filling ring with no
 				    run behind it would lie. */}
-					{kind !== "practice" && <CoverageRing chatId={chatId} refreshKey={coverageTick} />}
+					{kind !== "aside" && asides.length > 0 && (
+						<div className="relative">
+							<button
+								type="button"
+								data-testid="asides-chip"
+								onClick={() => setAsideMenu((v) => !v)}
+								className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+								title="Side questions asked in this session"
+							>
+								<CornerDownRightIcon className="size-3" aria-hidden />
+								Asides ({asides.length})
+							</button>
+							{asideMenu && (
+								<div className="absolute right-0 top-full z-30 mt-1 max-h-72 w-72 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md">
+									{asides.map((a) => (
+										<button
+											key={a.id}
+											type="button"
+											onClick={() => {
+												setAsideMenu(false);
+												setAsideOpen({ id: a.id });
+											}}
+											className="block w-full truncate rounded px-2 py-1 text-left text-xs hover:bg-muted"
+										>
+											{a.title}
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+					)}
+					{kind !== "practice" && kind !== "aside" && <CoverageRing chatId={chatId} refreshKey={coverageTick} />}
 					{/* Practice sessions: no phase arc — a quiet Practice tag
-					    instead of the phase chip. */}
-					{kind === "practice" ? (
+					    instead of the phase chip. Asides: a ↳ parent link. */}
+					{kind === "aside" ? (
+						<a
+							data-testid="phase-chip"
+							data-phase="aside"
+							href={asideOrigin ? `/chat/${asideOrigin.chatId}` : undefined}
+							title={asideOrigin ? `Back to ${asideOrigin.title}` : undefined}
+							className="flex shrink-0 items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
+						>
+							<CornerDownRightIcon className="size-3" aria-hidden />
+							Aside
+						</a>
+					) : kind === "practice" ? (
 						<span
 							data-testid="phase-chip"
 							data-phase="practice"
@@ -1318,7 +1459,7 @@ export function Chat({
 				<Conversation className="h-full min-w-0 flex-1" initial="instant" contextRef={scrollContextRef}>
 					<SessionMessageNavigation />
 					<ConversationContent className="min-h-full gap-0 p-0">
-						<div data-session-find-root="" className={`${COLUMN} flex flex-1 flex-col gap-4 pt-4`}>
+						<div data-session-find-root="" className={`${COLUMN} flex flex-1 flex-col gap-4 pt-4`} onMouseUp={onTranscriptMouseUp}>
 							{messages.length === 0 && !busy && (
 								<ConversationEmptyState
 									title="New session"
@@ -1357,6 +1498,8 @@ export function Chat({
 										switch (part.type) {
 											case "data-graph-context":
 												return <GraphContextCard key={pi} data={part.data as GraphContextData} />;
+											case "data-aside-context":
+												return <AsideContextCard key={pi} data={part.data as AsideContextData} />;
 											case "data-compaction":
 												return <CompactionMomentDivider key={pi} data={part.data as CompactionDividerData} />;
 											case "data-compaction-cut":
@@ -1684,6 +1827,20 @@ export function Chat({
 						onClose={() => setFigureFocus(null)}
 					/>
 				)}
+				{selectionChip && !asideOpen && (
+					<button
+						type="button"
+						data-testid="ask-about-this"
+						onMouseDown={(e) => e.preventDefault()}
+						onClick={() => void openAside({ quote: selectionChip.text, messageId: selectionChip.messageId })}
+						style={{ top: selectionChip.top, left: selectionChip.left }}
+						className="absolute z-30 flex items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 text-xs shadow-md hover:bg-muted"
+					>
+						<MessageSquareQuoteIcon className="size-3.5" aria-hidden />
+						Ask about this
+					</button>
+				)}
+				{asideOpen && <AsidePanel asideId={asideOpen.id} initialQuestion={asideOpen.question} onClose={closeAside} />}
 				{planOpen && <PlanPopup messages={messages} onClose={() => setPlanOpen(false)} />}
 				<AbortTurnDialog mode={abortAsk} onClose={() => setAbortAsk(null)} onConfirm={confirmAbort} busy={busy} />
 				</div>

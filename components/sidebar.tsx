@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode } from "@/src/core";
-import { DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { CornerDownRightIcon, DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -274,6 +274,27 @@ function sessionMeta(chat: ChatListItem): string {
  * state-aware meta. Exported for render tests — pure function of the
  * list item.
  */
+/** Asides (2026-10-24) nest under their parent: each parent is followed
+ *  by its asides (newest first, the list's own order); an aside whose
+ *  parent is gone stays in place, flat. Pure — the render tests pin it. */
+export function nestAsides<T extends { id: string; kind?: string; aside?: { chatId: string } }>(list: readonly T[]): T[] {
+	const byParent = new Map<string, T[]>();
+	const ids = new Set(list.map((c) => c.id));
+	for (const c of list) {
+		if (c.kind === "aside" && c.aside && ids.has(c.aside.chatId)) {
+			const arr = byParent.get(c.aside.chatId) ?? [];
+			arr.push(c);
+			byParent.set(c.aside.chatId, arr);
+		}
+	}
+	const out: T[] = [];
+	for (const c of list) {
+		if (c.kind === "aside" && c.aside && ids.has(c.aside.chatId)) continue;
+		out.push(c, ...(byParent.get(c.id) ?? []));
+	}
+	return out;
+}
+
 export function SessionRow({
 	chat,
 	active,
@@ -300,6 +321,7 @@ export function SessionRow({
 				"relative mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
 				active && "bg-accent",
 				kbdSelected && !active && "bg-accent/60 ring-1 ring-border",
+				chat.kind === "aside" && "ml-4 w-[calc(100%-1rem)]",
 			)}
 		>
 			<SessionStatus busy={chat.busy || chat.compacting} />
@@ -315,6 +337,9 @@ export function SessionRow({
 			{/* The dumbbell rides the FAR RIGHT (owner round 6, 2026-10-05) —
 			    was left of the name; right-aligned keeps the titles flush with
 			    the teaching rows and reads cleaner. */}
+			{chat.kind === "aside" && (
+				<CornerDownRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Aside" />
+			)}
 			{(chat.kind ?? "teach") === "practice" && (
 				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Practice session" />
 			)}
@@ -408,9 +433,11 @@ function SessionsSidebar() {
 	 * keeps the natural list order (scores are all 0, sort is stable). */
 	const shown = useMemo(() => {
 		const q = query.trim();
-		let list = chats;
+		let list = chats ? nestAsides(chats) : chats;
 		if (list && kindFilter !== "all") {
-			list = list.filter((c) => (c.kind ?? "teach") === kindFilter);
+			// Asides follow their parent's kind (they nest under it).
+			const kindOf = new Map(list.map((c) => [c.id, c.kind ?? "teach"]));
+			list = list.filter((c) => (c.kind === "aside" ? (kindOf.get(c.aside?.chatId ?? "") ?? "teach") : (c.kind ?? "teach")) === kindFilter);
 		}
 		if (!list) return list;
 		if (!q) return list;

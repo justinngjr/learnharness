@@ -46,6 +46,7 @@ export * from "./input-events.ts";
 // canon (one continuous assistant document, step separators) ported from
 // the deleted server projection to the client side. Pure, browser-safe.
 export * from "./view.ts";
+export * from "./aside.ts";
 export * from "./tool-parts.ts";
 export * from "./prices.ts";
 export * from "./context-usage.ts";

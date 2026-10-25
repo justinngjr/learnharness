@@ -11,7 +11,7 @@
 
 import type { LhMessage } from "./native-messages.ts";
 import type {
-	ChatRecord,
+	AsideOrigin, ChatRecord,
 	ChatSettings,
 	ChatSummary,
 	GraphChain,
@@ -34,7 +34,7 @@ export interface ChatStore {
 	/** Create a session record (persisted immediately). */
 	/** Create a session record; kind "practice" marks a practice session
 	 *  (absent = teach, the default). */
-	createChat(title: string, kind?: "practice"): ChatRecord;
+	createChat(title: string, kind?: "practice" | "aside", aside?: AsideOrigin): ChatRecord;
 	/** The full record, or null if unknown id / corrupt file. */
 	getChat(id: string): ChatRecord | null;
 	/** All sessions, newest activity first (the sidebar's list view). */
