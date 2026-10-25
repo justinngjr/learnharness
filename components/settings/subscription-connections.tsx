@@ -89,6 +89,7 @@ export function NativeSubscriptionUIProvider({ children }: { children: React.Rea
 			</> : view === "notice" ? <>
 				<p className="mt-3 text-xs leading-relaxed text-muted-foreground" data-testid="subscription-privacy-notice">{subscriptionNotice(descriptor.label)}</p>
 				{dialog === "github-copilot" && <p className="mt-3 text-xs leading-relaxed text-muted-foreground" data-testid="copilot-policy-notice">{COPILOT_POLICY_NOTICE}</p>}
+				{dialog === "openai-codex" && <p className="mt-3 text-xs leading-relaxed text-muted-foreground" data-testid="codex-login-notice">Signs in through Codex&apos;s browser flow: your browser opens and returns to this app on localhost:1455. Quit the Codex CLI first if it is running, or paste the redirect URL when prompted. Works on accounts whose workspace blocks device-code and third-party sign-in.</p>}
 			</> : <>
 				<div className="mt-4 flex items-center gap-3 text-xs text-foreground">
 					<Toggle label="Allow background use" checked={management ? status.allowBackgroundUse : background} disabled={busy || !!operation || status.pending || !status.available} onChange={(enabled) => { setBackground(enabled); if (management && bridge) void control(() => bridge.consent(dialog, enabled)); else setBackgroundDirty(true); }} />
