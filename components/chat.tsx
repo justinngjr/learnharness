@@ -50,6 +50,7 @@ import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
 import { ArrowRightIcon, CornerDownRightIcon, DumbbellIcon, MessageSquareQuoteIcon, SparklesIcon, WaypointsIcon } from "lucide-react";
+import { TeachDifferentlyAction } from "@/components/teach-feedback";
 import { AsideContextCard, AsidePanel, type AsideRequest } from "@/components/aside-panel";
 import { ASIDE_EXPLAIN_PROMPT, parseBtw, type AsideContextData, type AsideOrigin } from "@/src/core";
 import type { PlanBlockData } from "@/src/core";
@@ -1635,6 +1636,9 @@ export function Chat({
 												}
 											})}
 										</MessageContent>
+										{kind === "teach" && !(localStream && mi === messages.length - 1) && (
+											<TeachDifferentlyAction chatId={chatId} messageId={m.id} />
+										)}
 									</Message>
 									)}
 								</Fragment>

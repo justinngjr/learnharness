@@ -27,6 +27,7 @@
  * (fully concrete) view lives in settings-resolution.ts.
  */
 
+import { sanitizeLearnerPreferences, type LearnerPreference } from "./learner-preferences.ts";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { providerLabel } from "./auth-keys.ts";
 import type { ModelRole } from "../../config.ts";
@@ -367,6 +368,9 @@ export interface UserSettings {
 	appearance?: AppearanceSettings;
 	graph?: GraphSettings;
 	compaction?: CompactionSettings;
+	/** Learner preferences (2026-10-25): global teaching rules; see
+	 *  core/learner-preferences.ts. Pure addition — absent on older records. */
+	learnerPreferences?: LearnerPreference[];
 	[key: string]: unknown;
 }
 
@@ -629,6 +633,9 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 		out.graph = sanitizeGraph(r.graph as Record<string, unknown>);
 		if (r.compaction !== undefined && r.compaction !== null && typeof r.compaction === "object") {
 			out.compaction = sanitizeCompaction(r.compaction as Record<string, unknown>);
+		}
+		if (r.learnerPreferences !== undefined) {
+			out.learnerPreferences = sanitizeLearnerPreferences(r.learnerPreferences);
 		}
 	}
 	// Unknown top-level keys ride along untouched (forward-compat). One
