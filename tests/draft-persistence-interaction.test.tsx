@@ -95,7 +95,7 @@ describe("draft persistence through a remount (owner report 2026-10-25)", () => 
 
 		// What a previous visit left behind (written through on every edit).
 		writeDraft(questionDraftKey("q1", "answer"), "each input maps to exactly one output");
-		let submitted: { text?: string } | null = null;
+		let submitted = null as { text?: string } | null;
 		root = createRoot(host);
 		await act(async () => root.render(ask("q1", (o) => (submitted = o as { text?: string }))));
 		assert.ok(!submitButton().disabled, "the restored draft is submittable");
