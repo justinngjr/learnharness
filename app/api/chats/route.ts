@@ -1,5 +1,6 @@
 import { chainsForSelection, formatChainLine } from "@/src/core";
 import { newGraphContextMessage, type GraphContextPick } from "@/src/core";
+import { asideTitle, newAsideContextMessage, type AsideOrigin } from "@/src/core";
 import { compactionInFlight, createChat, isTurnRunning, listChats, readSettingsRecord, stores, titleFromPrompt } from "@/src/server";
 import type { ChatListItem } from "@/src/core";
 
@@ -20,8 +21,30 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-	const body = (await req.json().catch(() => ({}))) as { title?: unknown; kind?: unknown; graphContext?: unknown };
+	const body = (await req.json().catch(() => ({}))) as { title?: unknown; kind?: unknown; graphContext?: unknown; aside?: unknown };
 	const title = typeof body.title === "string" ? body.title : "";
+	// Asides (2026-10-24 — pi's /btw): a read-only fork of a parent session.
+	// message[0] is the aside-context marker (the parent transcript + the
+	// highlighted passage); the session inherits the parent's model; the
+	// parent record is only READ here — it never learns about the aside.
+	if (body.kind === "aside") {
+		const raw = (body.aside ?? {}) as { chatId?: unknown; quote?: unknown; messageId?: unknown };
+		const parentId = typeof raw.chatId === "string" ? raw.chatId : "";
+		const parent = parentId ? stores.chatStore.getChat(parentId) : null;
+		if (!parent) return Response.json({ error: "parent not found" }, { status: 404 });
+		if (parent.kind === "aside") return Response.json({ error: "cannot fork an aside" }, { status: 400 });
+		const quote = typeof raw.quote === "string" ? raw.quote.trim().slice(0, 4000) : "";
+		const origin: AsideOrigin = {
+			chatId: parent.id,
+			title: parent.title,
+			...(quote ? { quote } : {}),
+			...(typeof raw.messageId === "string" && raw.messageId ? { messageId: raw.messageId } : {}),
+		};
+		const chat = createChat(asideTitle(origin), "aside", origin);
+		if (parent.settings) stores.chatStore.saveSettings(chat.id, parent.settings);
+		stores.chatStore.saveMessages(chat.id, [newAsideContextMessage(origin, parent.messages)]);
+		return Response.json({ id: chat.id, title: chat.title });
+	}
 	// Practice sessions (owner, 2026-10-04): kind "practice" marks the
 	// record — the practice agent + its tools from turn 1, no extraction.
 	const kind = body.kind === "practice" ? ("practice" as const) : undefined;

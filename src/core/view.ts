@@ -363,6 +363,16 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 			});
 			return;
 		}
+		case "aside-context": {
+			// The aside's forked context (asides, 2026-10-24): a collapsed
+			// card above the side question — scaffolding like graph-context.
+			out.push({
+				id: marker.id,
+				role: "user",
+				parts: [{ type: "data-aside-context", id: `ac_${marker.id}`, data: marker.details }],
+			});
+			return;
+		}
 		case "subagent-steer": {
 			const meta = marker.details as SubagentResultMeta;
 			const artifact = marker.details as {
