@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clearQuestionDrafts, questionDraftKey, usePersistedDraft } from "@/components/draft-store";
 import { ArrowDownIcon, ChevronRightIcon, PlayIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { finishDictation, isDictationActive, joinDictation, useDictationTarget } from "@/components/dictation";
@@ -322,6 +323,30 @@ function QuestionDockForm({
 	 * in time — submit reads these, kept current at every write site. */
 	const thinkingTextRef = useRef("");
 	const answerTextRef = useRef("");
+	/* DRAFTS SURVIVE THE VIEW (owner report 2026-10-25): the dock unmounts
+	 * with the chat view on every switch, so the typed text lives in the
+	 * draft store under this question's tool call until answered or
+	 * dismissed. The appliers keep the ref mirrors current. */
+	const applyThinking = useCallback((v: string) => {
+		thinkingTextRef.current = v;
+		setThinking(v);
+	}, []);
+	const applyAnswerText = useCallback((v: string) => {
+		answerTextRef.current = v;
+		setText(v);
+	}, []);
+	const applyOther = useCallback(
+		(v: string) => {
+			setOther(v);
+			// A restored Other draft re-selects its row, as typing it did.
+			const mode: SelectMode = qd.mode === "multi-select" ? "multi-select" : "single-select";
+			if (v.length > 0) setSel((prev) => (prev.otherSelected ? prev : toggleOther(mode, prev)));
+		},
+		[qd.mode],
+	);
+	usePersistedDraft(questionDraftKey(toolCallId, "thinking"), thinking, applyThinking);
+	usePersistedDraft(questionDraftKey(toolCallId, "answer"), text, applyAnswerText);
+	usePersistedDraft(questionDraftKey(toolCallId, "other"), other, applyOther);
 	// Confidence (owner, 2026-10-01): an index into CONFIDENCE_STOPS,
 	// resting at 50 — a real coin flip by definition, untouched or
 	// deliberate (the same number, the same meaning). The dock unmounts
@@ -390,6 +415,7 @@ function QuestionDockForm({
 			// "untouched"); buildAnswer drops it on "I don't know".
 			confidence: kind === "quiz" ? CONFIDENCE_STOPS[confIdx] : undefined,
 		};
+		clearQuestionDrafts(toolCallId);
 		onSubmit(buildAnswer(qd, req, toolName));
 	};
 
