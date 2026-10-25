@@ -37,6 +37,26 @@ export function enterAction(state: {
 	return "none";
 }
 
+/** The /btw tag (asides, owner 2026-10-25): rides whichever text field
+ *  the learner typed the command into — the composer, the question dock's
+ *  answer/thinking field, the reading field — so command feedback does
+ *  not depend on which dock variant is mounted. */
+export function BtwBadge({ className }: { className?: string }) {
+	return (
+		<span
+			data-testid="btw-badge"
+			title="Opens an aside — a side question over this lesson's context; nothing is written to the lesson"
+			className={cn(
+				"flex h-6 shrink-0 items-center gap-1 rounded-md bg-primary/15 px-1.5 font-ui text-[10px] font-medium uppercase tracking-wide text-primary",
+				className,
+			)}
+		>
+			<CornerDownRightIcon className="size-3" aria-hidden />
+			aside
+		</span>
+	);
+}
+
 export function Composer({
 	busy,
 	value,
@@ -95,16 +115,7 @@ export function Composer({
 				act();
 			}}
 		>
-			{btw && (
-				<span
-					data-testid="btw-badge"
-					title="Opens an aside — a side question over this lesson's context; nothing is written to the lesson"
-					className="mb-2 ml-1 flex h-6 shrink-0 items-center gap-1 rounded-md bg-primary/15 px-1.5 font-ui text-[10px] font-medium uppercase tracking-wide text-primary"
-				>
-					<CornerDownRightIcon className="size-3" aria-hidden />
-					aside
-				</span>
-			)}
+			{btw && <BtwBadge className="mb-2 ml-1" />}
 			<textarea
 				ref={inputRef}
 				value={value}

@@ -5,6 +5,8 @@ import { ArrowDownIcon, ChevronRightIcon, PlayIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { finishDictation, isDictationActive, joinDictation, useDictationTarget } from "@/components/dictation";
 import { useEnterSubmits } from "@/components/enter-submits";
+import { BtwBadge } from "@/components/composer";
+import { parseBtw } from "@/src/core";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
 import {
@@ -367,6 +369,9 @@ function QuestionDockForm({
 
 	const toggle = (idx: number) => setSel(toggleOption(selectMode, sel, idx));
 
+	// /btw feedback (asides, owner 2026-10-25): the field's label becomes
+	// the ASIDE tag and the text takes the accent — same cue as the composer.
+	const btw = parseBtw(qd.mode === "text" ? text : thinking) !== null;
 	const canSubmit =
 		qd.mode === "text"
 			? text.trim().length > 0
@@ -846,8 +851,8 @@ function QuestionDockForm({
 					data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}
 					className="rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
 				>
-					<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-						{qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
+					<div className="flex items-center px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+						{btw ? <BtwBadge /> : qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
 					</div>
 					{qd.mode === "text" ? (
 						<textarea
@@ -875,7 +880,10 @@ function QuestionDockForm({
 							}}
 							placeholder="Type your answer…"
 							rows={1}
-							className="field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
+							className={cn(
+								"field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground",
+								btw && "text-primary",
+							)}
 						/>
 					) : (
 						<textarea
@@ -907,6 +915,7 @@ function QuestionDockForm({
 							rows={1}
 							className={cn(
 								"field-sizing-content lh-input max-h-48 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground/70",
+								btw && "text-primary",
 								// Phase-scaled prominence: teaching invites depth,
 								// probing stays quick.
 								phase === "teach" ? "min-h-[4.5rem]" : "min-h-10",
