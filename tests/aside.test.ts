@@ -17,7 +17,7 @@ process.env.LH_DATA_DIR = TMP_DATA;
 const { chatStore } = await import("../src/store/chats.ts");
 const { parseBtw, renderParentTranscript, newAsideContextMessage, asideTitle, projectView, nativeInputCause, toLlmMessages } =
 	await import("../src/core/index.ts");
-const { nestAsides } = await import("../components/sidebar.tsx");
+const { nestAsides, asideCounts, hideCollapsedAsides } = await import("../components/sidebar.tsx");
 const { POST } = await import("../app/api/chats/route.ts");
 const { listSourceSegments, allSegmentPaths } = await import("../src/agent/prompt-segments.ts");
 const { composeInstructions } = await import("../src/agent/teacher-agent.ts");
@@ -175,5 +175,26 @@ describe("POST /api/chats {kind: aside}", () => {
 		const parent = chatStore.createChat("P");
 		const a = chatStore.createChat("A", "aside", { chatId: parent.id, title: "P" });
 		assert.equal((await post({ kind: "aside", aside: { chatId: a.id } })).status, 400);
+	});
+});
+
+describe("sidebar — collapsible asides (owner, 2026-10-26)", () => {
+	const list = nestAsides([
+		{ id: "p1", kind: "teach" },
+		{ id: "a1", kind: "aside", aside: { chatId: "p1" } },
+		{ id: "a2", kind: "aside", aside: { chatId: "p1" } },
+		{ id: "p2", kind: "teach" },
+		{ id: "orphan", kind: "aside", aside: { chatId: "gone" } },
+	]);
+	it("counts asides per parent; orphans and childless parents have none", () => {
+		assert.deepEqual([...asideCounts(list)], [["p1", 2]]);
+	});
+	it("a collapsed parent folds its asides away; others stay", () => {
+		assert.deepEqual(hideCollapsedAsides(list, new Set(["p1"])).map((c) => c.id), ["p1", "p2", "orphan"]);
+		assert.deepEqual(hideCollapsedAsides(list, new Set()).map((c) => c.id), ["p1", "a1", "a2", "p2", "orphan"]);
+	});
+	it("the active aside keeps its parent open even when collapsed", () => {
+		assert.deepEqual(hideCollapsedAsides(list, new Set(["p1"]), "a2").map((c) => c.id), ["p1", "a1", "a2", "p2", "orphan"]);
+		assert.deepEqual(hideCollapsedAsides(list, new Set(["p1"]), "p2").map((c) => c.id), ["p1", "p2", "orphan"]);
 	});
 });

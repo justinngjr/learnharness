@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode } from "@/src/core";
-import { CornerDownRightIcon, DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerDownRightIcon, DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -295,16 +295,48 @@ export function nestAsides<T extends { id: string; kind?: string; aside?: { chat
 	return out;
 }
 
+/** Collapsible asides (owner, 2026-10-26): parent id → number of asides
+ *  nested under it in the (already nested) list. Pure. */
+export function asideCounts<T extends { id: string; kind?: string; aside?: { chatId: string } }>(nested: readonly T[]): Map<string, number> {
+	const ids = new Set(nested.map((c) => c.id));
+	const counts = new Map<string, number>();
+	for (const c of nested) {
+		if (c.kind === "aside" && c.aside && ids.has(c.aside.chatId)) counts.set(c.aside.chatId, (counts.get(c.aside.chatId) ?? 0) + 1);
+	}
+	return counts;
+}
+
+/** Drop the asides of collapsed parents — except the active aside, which
+ *  stays visible (and keeps its parent effectively open) so the row you are
+ *  in never vanishes from under you. Pure. */
+export function hideCollapsedAsides<T extends { id: string; kind?: string; aside?: { chatId: string } }>(
+	nested: readonly T[],
+	collapsed: ReadonlySet<string>,
+	activeId?: string | null,
+): T[] {
+	const activeParent = nested.find((c) => c.id === activeId && c.kind === "aside")?.aside?.chatId;
+	return nested.filter((c) => !(c.kind === "aside" && c.aside && collapsed.has(c.aside.chatId) && c.aside.chatId !== activeParent));
+}
+
 export function SessionRow({
 	chat,
 	active,
 	onOpen,
 	kbdSelected = false,
 	onContextMenu,
+	asideCount = 0,
+	asidesCollapsed = false,
+	onToggleAsides,
 }: {
 	chat: ChatListItem;
 	active: boolean;
 	onOpen: () => void;
+	/** Asides nested under this row (0 = no chevron). The chevron is a
+	 *  span, not a button: rows are buttons (no nesting) and the keyboard
+	 *  walk counts the list's buttons. */
+	asideCount?: number;
+	asidesCollapsed?: boolean;
+	onToggleAsides?: () => void;
 	/** Keyboard-cycle highlight (shortcut wave A: Alt+↑/↓ + Alt+Enter) —
 	 *  visually distinct from the active session, which stays filled. */
 	kbdSelected?: boolean;
@@ -342,6 +374,30 @@ export function SessionRow({
 			)}
 			{(chat.kind ?? "teach") === "practice" && (
 				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Practice session" />
+			)}
+			{asideCount > 0 && (
+				<span
+					role="button"
+					tabIndex={0}
+					aria-expanded={!asidesCollapsed}
+					aria-label={asidesCollapsed ? `Show ${asideCount} aside${asideCount === 1 ? "" : "s"}` : "Hide asides"}
+					data-testid="aside-toggle"
+					onClick={(e) => {
+						e.stopPropagation();
+						onToggleAsides?.();
+					}}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" || e.key === " ") {
+							e.preventDefault();
+							e.stopPropagation();
+							onToggleAsides?.();
+						}
+					}}
+					className="-mr-1 flex shrink-0 items-center gap-0.5 rounded-sm px-1 py-0.5 text-xs text-muted-foreground/70 hover:bg-foreground/10 hover:text-foreground"
+				>
+					{asidesCollapsed && <span className="tabular-nums">{asideCount}</span>}
+					{asidesCollapsed ? <ChevronRightIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
+				</span>
 			)}
 		</button>
 	);
@@ -402,6 +458,9 @@ export function RenameRow({ chat, onCommit, onCancel }: { chat: ChatListItem; on
  *  snapshot, persisted in localStorage, defaulting to All. */
 export type SessionKindFilter = "teach" | "all" | "practice";
 const KIND_FILTER_KEY = "lh:session-kind-filter";
+/** Parents whose asides are folded away (chevron on the row), remembered
+ *  across reloads as a JSON array of chat ids. */
+const COLLAPSED_ASIDES_KEY = "lh:collapsed-asides";
 
 function SessionsSidebar() {
 	const { open, toggle } = useSidebar();
@@ -416,7 +475,26 @@ function SessionsSidebar() {
 		setKindFilter(f);
 		window.localStorage.setItem(KIND_FILTER_KEY, f);
 	}, []);
+	const [collapsedAsides, setCollapsedAsides] = useState<ReadonlySet<string>>(() => new Set());
+	useEffect(() => {
+		try {
+			const stored = JSON.parse(window.localStorage.getItem(COLLAPSED_ASIDES_KEY) ?? "[]") as unknown;
+			if (Array.isArray(stored)) setCollapsedAsides(new Set(stored.filter((v): v is string => typeof v === "string")));
+		} catch {
+			/* unreadable → nothing collapsed */
+		}
+	}, []);
+	const toggleAsides = useCallback((parentId: string) => {
+		setCollapsedAsides((prev) => {
+			const next = new Set(prev);
+			if (next.has(parentId)) next.delete(parentId);
+			else next.add(parentId);
+			window.localStorage.setItem(COLLAPSED_ASIDES_KEY, JSON.stringify([...next]));
+			return next;
+		});
+	}, []);
 	const pathname = usePathname();
+	const activeChatId = pathname?.match(/^\/chat\/([^/?#]+)/)?.[1] ?? null;
 	const router = useRouter();
 	const { open: openSettings } = useSettingsDialog();
 
@@ -440,13 +518,15 @@ function SessionsSidebar() {
 			list = list.filter((c) => (c.kind === "aside" ? (kindOf.get(c.aside?.chatId ?? "") ?? "teach") : (c.kind ?? "teach")) === kindFilter);
 		}
 		if (!list) return list;
-		if (!q) return list;
+		// A search shows every match; collapsing only folds the browsed list.
+		if (!q) return hideCollapsedAsides(list, collapsedAsides, activeChatId);
 		return list
 			.map((c) => ({ c, score: fuzzyScore(q, c.title) }))
 			.filter((r): r is { c: (typeof list)[number]; score: number } => r.score !== null)
 			.sort((a, b) => b.score - a.score)
 			.map((r) => r.c);
-	}, [chats, query, kindFilter]);
+	}, [chats, query, kindFilter, collapsedAsides, activeChatId]);
+	const counts = useMemo(() => (chats ? asideCounts(nestAsides(chats)) : new Map<string, number>()), [chats]);
 
 	const refreshInFlightRef = useRef(false);
 	const refresh = useCallback(async () => {
@@ -849,6 +929,9 @@ function SessionsSidebar() {
 										router.push(`/chat/${c.id}`);
 									}}
 									onContextMenu={(e) => openContext(e, c)}
+									asideCount={counts.get(c.id) ?? 0}
+									asidesCollapsed={collapsedAsides.has(c.id)}
+									onToggleAsides={() => toggleAsides(c.id)}
 								/>
 							),
 						)
