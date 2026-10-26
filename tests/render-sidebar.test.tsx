@@ -161,3 +161,24 @@ describe("SessionRow practice badge (practice sessions, 2026-10-04)", () => {
 		assert.match(html, /Problem waiting ·/);
 	});
 });
+
+describe("SessionRow aside chevron (collapsible asides, 2026-10-26)", () => {
+	const parent = { id: "p1", title: "Functions", kind: "teach", messageCount: 4, createdAt: 0, updatedAt: 0 } as unknown as ChatListItem;
+	it("a parent with asides carries the chevron, expanded by default", () => {
+		const html = renderToStaticMarkup(<SessionRow chat={parent} active={false} onOpen={() => {}} asideCount={2} />);
+		assert.match(html, /data-testid="aside-toggle"/);
+		assert.match(html, /aria-expanded="true"/);
+		assert.match(html, /aria-label="Hide asides"/);
+		assert.equal((html.match(/<button/g) ?? []).length, 1, "the chevron is not a nested button");
+	});
+	it("collapsed: the chevron turns right and shows the hidden count", () => {
+		const html = renderToStaticMarkup(<SessionRow chat={parent} active={false} onOpen={() => {}} asideCount={3} asidesCollapsed />);
+		assert.match(html, /aria-expanded="false"/);
+		assert.match(html, /aria-label="Show 3 asides"/);
+		assert.match(html, />3</);
+	});
+	it("rows without asides have no chevron", () => {
+		const html = renderToStaticMarkup(<SessionRow chat={parent} active={false} onOpen={() => {}} />);
+		assert.doesNotMatch(html, /aside-toggle/);
+	});
+});
